@@ -1,0 +1,16 @@
+name: Auto-add to Octo Board
+
+on:
+  issues:
+    types: [opened]
+  pull_request_target:
+    types: [opened]
+
+jobs:
+  add-to-project:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/add-to-project@v1
+        with:
+          project-url: https://github.com/orgs/Mininglamp-OSS/projects/2
+          github-token: ${{ secrets.PROJECT_TOKEN }}
