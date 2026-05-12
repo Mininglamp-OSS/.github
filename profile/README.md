@@ -74,6 +74,18 @@ Three laws govern every Agent in Octo, in strict priority order:
 
 **Organizations going AI-native** — You don't need to extract every employee's tacit knowledge to adopt AI. Employees work with their Agents, codifying *how-to* knowledge into reusable skills. The organization retains these explicit outputs; employees retain their judgment and tacit expertise. Both sides benefit.
 
+## Community
+
+**[Join our Discord →](https://discord.gg/vj9Vsj9hSB)**
+
+The OCTO community Discord is the best place to get help, discuss features, and connect with other users and contributors.
+
+- 💬 **General chat** — discuss anything OCTO-related
+- ❓ **Help & support** — ask questions, get answers
+- 📦 **Project channels** — dedicated channels for each OCTO component
+- 🔧 **Development** — architecture discussions, contributing guide, PR feed
+- 🤖 **Bot ecosystem** — build and share OCTO bots
+
 ## Contributing
 
 We welcome contributions from everyone. Please read our [Contributing Guide](https://github.com/Mininglamp-OSS/.github/blob/main/CONTRIBUTING.md) before getting started.
