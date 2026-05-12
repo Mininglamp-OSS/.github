@@ -4,6 +4,8 @@
 
 **Where humans and AI Agents work as one team.**
 
+English | [简体中文](./README_zh.md)
+
 </div>
 
 ---
