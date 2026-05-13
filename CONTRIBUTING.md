@@ -4,6 +4,23 @@ Thank you for your interest in contributing! This guide applies to all repositor
 
 ## Getting Started
 
+## Issue or Discussion?
+
+Not sure whether to open an Issue or a Discussion? Use this guide:
+
+### Open an Issue when:
+- You found a **reproducible bug** — include version, environment, and steps to reproduce
+- You have a **concrete feature request** — need is clearly defined with a specific use case
+
+### Open a Discussion when:
+- You have a **usage question** or need help → [Q&A](https://github.com/Mininglamp-OSS/community/discussions/categories/q-a)
+- You have an **early-stage idea** to share → [Ideas](https://github.com/Mininglamp-OSS/community/discussions/categories/ideas)
+- You built something with Octo → [Show and Tell](https://github.com/Mininglamp-OSS/community/discussions/categories/show-and-tell)
+- You're not sure → open a Discussion; maintainers will convert it to an Issue if needed
+
+👉 **Community hub:** https://github.com/Mininglamp-OSS/community
+
+
 1. **Fork** the repository you want to contribute to.
 2. **Clone** your fork locally.
 3. **Create a branch** from `main` with a descriptive name:
