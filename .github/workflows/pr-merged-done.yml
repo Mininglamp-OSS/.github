@@ -25,7 +25,7 @@ jobs:
           github-token: ${{ secrets.PROJECT_TOKEN }}
           script: |
             const ORG = 'Mininglamp-OSS';
-            const PROJECT_NUUMBER = 2;
+            const PROJECT_NUMBER = 2;
 
             const pr = context.payload.pull_request;
             if (!pr) {

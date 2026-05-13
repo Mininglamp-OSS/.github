@@ -38,6 +38,7 @@ jobs:
           REPO_NAME: ${{ inputs.repo_name }}
           WORKFLOW_NAME: ${{ inputs.workflow_name }}
           CONCLUSION: ${{ inputs.conclusion }}
+          RUN_ID: ${{ inputs.run_id }}
           RUN_URL: ${{ inputs.run_url }}
           PROJECT_GROUP_ID: ${{ inputs.project_group_id }}
         run: |
@@ -77,8 +78,19 @@ jobs:
               print('No matching runs found, skipping.')
               sys.exit(0)
 
-          current  = same_wf[0]
-          previous = same_wf[1] if len(same_wf) > 1 else None
+          # Use run_id to precisely identify the current run (avoids race conditions
+          # when two runs complete close together).
+          run_id = int(os.environ.get('RUN_ID', 0))
+          matched = [r for r in same_wf if r['id'] == run_id]
+          if not matched:
+              print('WARN: run_id %s not found in recent runs window, falling back to same_wf[0]' % run_id)
+          current  = matched[0] if matched else same_wf[0]
+          # Only consider runs created before current to avoid picking a later
+          # concurrent run as "previous" (which would flip alert/recovery semantics).
+          older    = [r for r in same_wf
+                      if r['id'] != current['id']
+                      and r['created_at'] < current['created_at']]
+          previous = older[0] if older else None
 
           curr_conclusion = current['conclusion']
           prev_conclusion = previous['conclusion'] if previous else None
