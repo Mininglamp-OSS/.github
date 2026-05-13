@@ -38,6 +38,7 @@ permissions: {}
 jobs:
   notify:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Send to Octo
         env:
@@ -52,7 +53,7 @@ jobs:
           PROJECT_GROUP_ID: ${{ inputs.project_group_id }}
         run: |
           python3 << 'PYEOF'
-          import os, json, urllib.request
+          import os, json, sys, urllib.request, urllib.error
 
           action = os.environ['EVENT_ACTION']
           emoji = {'opened': '🆕', 'closed': '✅', 'reopened': '🔄', 'labeled': '🏷️'}.get(action, 'ℹ️')
@@ -80,8 +81,12 @@ jobs:
               body = json.dumps({'channel_id': group_id, 'channel_type': 2,
                                  'payload': {'type': 1, 'content': msg}}).encode()
               req = urllib.request.Request(api, data=body, headers=headers, method='POST')
-              with urllib.request.urlopen(req) as r:
-                  print(f'→ {group_id[:8]}... {r.status}')
+              try:
+                  with urllib.request.urlopen(req, timeout=15) as r:
+                      print(f'→ {group_id[:8]}... {r.status}')
+              except (urllib.error.HTTPError, urllib.error.URLError) as e:
+                  print(f'ERROR: failed to send message to {group_id[:8]}...: {e}')
+                  sys.exit(1)
 
           send('151a45970e1546afa9e947ac36a5c4e5', feed_msg)
           send(os.environ['PROJECT_GROUP_ID'], proj_msg)
