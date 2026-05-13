@@ -1,38 +1,27 @@
-# Auto-add issues / PRs to the Octo board.
-#
-# Two trigger paths share the same job:
-#
-#   1. Direct triggers (issues / pull_request_target) — covers the .github
-#      repo itself. PROJECT_TOKEN comes from an org-level secret.
-#
-#   2. workflow_call (reusable) — invoked by caller workflows in the other
-#      8 repos. PROJECT_TOKEN is forwarded by the caller.
-#
-# Both paths reference the same `secrets.PROJECT_TOKEN` expression.
+# Triggered directly on issues/PRs in this (.github) repo,
+# AND callable as a reusable workflow from any other repo in the org.
 name: Auto-add to Octo Board
 
 on:
+  # Direct trigger: covers events in the .github repo itself
   issues:
     types: [opened]
   pull_request_target:
     types: [opened]
+  # Reusable trigger: called from per-repo caller workflows
   workflow_call:
     secrets:
       PROJECT_TOKEN:
         required: true
 
-# GITHUB_TOKEN needs no permissions; the action uses PROJECT_TOKEN instead.
+# GITHUB_TOKEN needs no permissions; PROJECT_TOKEN (PAT) is used instead
 permissions: {}
 
 jobs:
   add-to-project:
     runs-on: ubuntu-latest
     steps:
-      # NOTE: pin pending — actions/add-to-project has no `refs/tags/v1`
-      # (only a moving `releases/v1` branch). Latest v1.x tag is v1.0.2
-      # at 244f685bbc3b7adfa8466e08b698b5577571133e; lock down once a v1
-      # major tag is published or after confirming v1.0.2 is acceptable.
-      - uses: actions/add-to-project@v1
+      - uses: actions/add-to-project@244f685bbc3b7adfa8466e08b698b5577571133e  # v1.0.2
         with:
           project-url: https://github.com/orgs/Mininglamp-OSS/projects/2
           github-token: ${{ secrets.PROJECT_TOKEN }}
