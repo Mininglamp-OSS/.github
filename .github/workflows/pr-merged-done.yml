@@ -25,7 +25,7 @@ jobs:
           github-token: ${{ secrets.PROJECT_TOKEN }}
           script: |
             const ORG = 'Mininglamp-OSS';
-            const PROJECT_NUMBER = 2;
+            const PROJECT_NUUMBER = 2;
 
             const pr = context.payload.pull_request;
             if (!pr) {
@@ -119,6 +119,10 @@ jobs:
                             number
                             repository { name owner { login } }
                           }
+                          ... on PullRequest {
+                            number
+                            repository { name owner { login } }
+                          }
                         }
                       }
                     }
@@ -128,6 +132,7 @@ jobs:
             `;
 
             const itemByIssue = new Map();
+            let prItemId = null;
             let cursor = null;
             do {
               const page = await github.graphql(itemsQuery, { projectId, cursor });
@@ -138,6 +143,11 @@ jobs:
                     && c.repository?.owner?.login?.toLowerCase() === repoOwner.toLowerCase()
                     && c.repository?.name?.toLowerCase() === repoName.toLowerCase()) {
                   itemByIssue.set(c.number, item.id);
+                } else if (c && c.__typename === 'PullRequest'
+                    && c.number === pr.number
+                    && c.repository?.owner?.login?.toLowerCase() === repoOwner.toLowerCase()
+                    && c.repository?.name?.toLowerCase() === repoName.toLowerCase()) {
+                  prItemId = item.id;
                 }
               }
               cursor = conn.pageInfo.hasNextPage ? conn.pageInfo.endCursor : null;
@@ -175,6 +185,24 @@ jobs:
               } catch (err) {
                 mutationFailures++;
                 console.log(`Failed to update issue #${issueNumber}: ${err.message}`);
+              }
+            }
+
+            // 4. Also move the PR itself to Done if it's on the board.
+            if (!prItemId) {
+              console.log(`PR #${pr.number} not on project board; skipping.`);
+            } else {
+              try {
+                await github.graphql(updateMutation, {
+                  projectId,
+                  itemId: prItemId,
+                  fieldId,
+                  optionId: doneOptionId,
+                });
+                console.log(`PR #${pr.number} → Done`);
+              } catch (err) {
+                mutationFailures++;
+                console.log(`Failed to update PR #${pr.number}: ${err.message}`);
               }
             }
 
