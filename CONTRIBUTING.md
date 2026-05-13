@@ -2,8 +2,6 @@
 
 Thank you for your interest in contributing! This guide applies to all repositories under the Mininglamp-OSS organization.
 
-## Getting Started
-
 ## Issue or Discussion?
 
 Not sure whether to open an Issue or a Discussion? Use this guide:
@@ -15,11 +13,12 @@ Not sure whether to open an Issue or a Discussion? Use this guide:
 ### Open a Discussion when:
 - You have a **usage question** or need help → [Q&A](https://github.com/Mininglamp-OSS/community/discussions/categories/q-a)
 - You have an **early-stage idea** to share → [Ideas](https://github.com/Mininglamp-OSS/community/discussions/categories/ideas)
-- You built something with Octo → [Show and Tell](https://github.com/Mininglamp-OSS/community/discussions/categories/show-and-tell)
+- You built something with Octo → [Show and tell](https://github.com/Mininglamp-OSS/community/discussions/categories/show-and-tell)
 - You're not sure → open a Discussion; maintainers will convert it to an Issue if needed
 
 👉 **Community hub:** https://github.com/Mininglamp-OSS/community
 
+## Getting Started
 
 1. **Fork** the repository you want to contribute to.
 2. **Clone** your fork locally.
@@ -90,4 +89,4 @@ All participants are expected to follow our [Code of Conduct](CODE_OF_CONDUCT.md
 
 ## Questions?
 
-If you're unsure about anything, open a discussion or issue — we're happy to help.
+Not sure where to start? See the [Issue or Discussion?](#issue-or-discussion) guide above, or browse the [community hub](https://github.com/Mininglamp-OSS/community).
