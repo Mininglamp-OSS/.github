@@ -14,9 +14,6 @@ on:
       conclusion:
         type: string
         required: true
-      run_id:
-        type: number
-        required: true
       run_url:
         type: string
         required: true
