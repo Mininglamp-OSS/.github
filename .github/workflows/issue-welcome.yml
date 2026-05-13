@@ -1,0 +1,117 @@
+name: Issue Welcome (Reusable)
+
+on:
+  workflow_call:
+
+jobs:
+  welcome:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Post welcome comment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issue = context.payload.issue;
+
+            // Skip bot-opened issues (Dependabot, etc.)
+            if (issue.user.type === 'Bot') {
+              console.log('Skipping bot-opened issue');
+              return;
+            }
+
+            // Language detection: Chinese characters in title or body → reply in Chinese
+            const text = (issue.title || '') + ' ' + (issue.body || '');
+            const isChinese = /[\u4e00-\u9fff]/.test(text);
+
+            // Issue type detection via labels (auto-applied by issue templates)
+            const labels = issue.labels.map(l => l.name);
+            const isBug     = labels.includes('bug');
+            const isFeature = labels.includes('feature');
+
+            let body;
+
+            if (isChinese) {
+              if (isBug) {
+                body = [
+                  '嗨，感谢提交 Bug Report！🐙',
+                  '',
+                  '我们已收到，近期会进行 triage。',
+                  '',
+                  '如果还没补充以下信息，可以追加到 issue 里，会帮助我们更快定位问题：',
+                  '- Octo 版本号 / commit hash',
+                  '- 完整的复现步骤',
+                  '- 相关日志或截图（注意遮盖敏感信息）',
+                  '',
+                  '我们会在这里跟进，请关注此 issue 的动态。感谢你对 Octo 的贡献！',
+                  '',
+                  '— Octo Team 🐙'
+                ].join('\n');
+              } else if (isFeature) {
+                body = [
+                  '嗨，感谢提出功能建议！🐙',
+                  '',
+                  '我们已收到，会将其纳入 Roadmap 评估。',
+                  '',
+                  '如果有更多使用场景或具体需求，欢迎继续在此补充——背景信息越详细，越有助于我们排优先级。',
+                  '',
+                  '感谢你对 Octo 的关注与支持！',
+                  '',
+                  '— Octo Team 🐙'
+                ].join('\n');
+              } else {
+                body = [
+                  '嗨，感谢提交 Issue！🐙',
+                  '',
+                  '我们已收到，近期会进行 triage。有后续进展会在这里跟进。',
+                  '',
+                  '— Octo Team 🐙'
+                ].join('\n');
+              }
+            } else {
+              if (isBug) {
+                body = [
+                  'Thanks for the bug report! 🐙',
+                  '',
+                  "We've received your issue and will triage it shortly.",
+                  '',
+                  'To help us resolve this faster, please make sure you\'ve included:',
+                  '- Octo version / commit hash',
+                  '- Exact steps to reproduce',
+                  '- Relevant logs or screenshots (please redact sensitive info)',
+                  '',
+                  "We'll follow up here once reviewed. Thanks for contributing to Octo!",
+                  '',
+                  '— Octo Team 🐙'
+                ].join('\n');
+              } else if (isFeature) {
+                body = [
+                  'Thanks for the feature request! 🐙',
+                  '',
+                  "We've received your suggestion and will evaluate it for our roadmap.",
+                  '',
+                  'Feel free to add more context — use cases, specific requirements, or examples — it really helps us prioritize effectively.',
+                  '',
+                  'Thanks for contributing to Octo!',
+                  '',
+                  '— Octo Team 🐙'
+                ].join('\n');
+              } else {
+                body = [
+                  'Thanks for opening this issue! 🐙',
+                  '',
+                  "We've received it and will triage shortly. We'll follow up here with any updates.",
+                  '',
+                  '— Octo Team 🐙'
+                ].join('\n');
+              }
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              body
+            });
