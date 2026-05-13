@@ -1,0 +1,86 @@
+# Reusable workflow: notify Octo IM when an issue event occurs.
+# Called from per-repo caller workflows.
+name: Octo Issue Feed (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      repo_name:
+        type: string
+        required: true
+      issue_number:
+        type: number
+        required: true
+      issue_title:
+        type: string
+        required: true
+      issue_url:
+        type: string
+        required: true
+      issue_author:
+        type: string
+        required: true
+      issue_labels:
+        type: string
+        default: '[]'
+      event_action:
+        type: string
+        required: true
+      project_group_id:
+        type: string
+        required: true
+    secrets:
+      OCTO_BOT_TOKEN:
+        required: true
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send to Octo
+        env:
+          OCTO_BOT_TOKEN: ${{ secrets.OCTO_BOT_TOKEN }}
+          REPO_NAME: ${{ inputs.repo_name }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          ISSUE_TITLE: ${{ inputs.issue_title }}
+          ISSUE_URL: ${{ inputs.issue_url }}
+          ISSUE_AUTHOR: ${{ inputs.issue_author }}
+          ISSUE_LABELS: ${{ inputs.issue_labels }}
+          EVENT_ACTION: ${{ inputs.event_action }}
+          PROJECT_GROUP_ID: ${{ inputs.project_group_id }}
+        run: |
+          python3 << 'PYEOF'
+          import os, json, urllib.request
+
+          action = os.environ['EVENT_ACTION']
+          emoji = {'opened': '🆕', 'closed': '✅', 'reopened': '🔄', 'labeled': '🏷️'}.get(action, 'ℹ️')
+
+          try:
+              labels = json.loads(os.environ['ISSUE_LABELS'])
+              labels_part = ' · 🏷️ ' + ', '.join(labels) if labels else ''
+          except Exception:
+              labels_part = ''
+
+          repo  = os.environ['REPO_NAME']
+          num   = os.environ['ISSUE_NUMBER']
+          title = os.environ['ISSUE_TITLE']
+          url   = os.environ['ISSUE_URL']
+          author = os.environ['ISSUE_AUTHOR']
+
+          feed_msg = f"{emoji} [{repo}] Issue #{num} · {title}\n👤 {author}{labels_part}\n🔗 {url}"
+          proj_msg = f"{emoji} Issue #{num} · {title}\n👤 {author}{labels_part}\n🔗 {url}"
+
+          api = 'https://im.deepminer.com.cn/api/v1/bot/sendMessage'
+          token = os.environ['OCTO_BOT_TOKEN']
+          headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
+
+          def send(group_id, msg):
+              body = json.dumps({'channel_id': group_id, 'channel_type': 2,
+                                 'payload': {'type': 1, 'content': msg}}).encode()
+              req = urllib.request.Request(api, data=body, headers=headers, method='POST')
+              with urllib.request.urlopen(req) as r:
+                  print(f'→ {group_id[:8]}... {r.status}')
+
+          send('151a45970e1546afa9e947ac36a5c4e5', feed_msg)
+          send(os.environ['PROJECT_GROUP_ID'], proj_msg)
+          PYEOF
