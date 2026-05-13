@@ -77,6 +77,8 @@ jobs:
           token = os.environ['OCTO_BOT_TOKEN']
           headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
 
+          failed = []
+
           def send(group_id, msg):
               body = json.dumps({'channel_id': group_id, 'channel_type': 2,
                                  'payload': {'type': 1, 'content': msg}}).encode()
@@ -86,8 +88,10 @@ jobs:
                       print(f'→ {group_id[:8]}... {r.status}')
               except (urllib.error.HTTPError, urllib.error.URLError) as e:
                   print(f'ERROR: failed to send message to {group_id[:8]}...: {e}')
-                  sys.exit(1)
+                  failed.append(group_id)
 
           send('151a45970e1546afa9e947ac36a5c4e5', feed_msg)
           send(os.environ['PROJECT_GROUP_ID'], proj_msg)
+          if failed:
+              sys.exit(1)
           PYEOF
