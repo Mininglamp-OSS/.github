@@ -101,8 +101,8 @@ jobs:
               try:
                   with urllib.request.urlopen(req, timeout=15) as r:
                       print(f'→ {group_id[:8]}... {r.status}')
-              except urllib.error.URLError as e:
-                  print(e)
+              except (urllib.error.HTTPError, urllib.error.URLError) as e:
+                  print(f'ERROR: failed to send message to {group_id[:8]}...: {e}')
                   sys.exit(1)
 
           send('1c303c142e9840f2a9b46c10b0972e8d', feed_msg)
