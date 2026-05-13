@@ -17,6 +17,7 @@ on:
       run_id:
         type: number
         required: false
+        default: 0
       run_url:
         type: string
         required: true
