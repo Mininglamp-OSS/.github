@@ -34,6 +34,7 @@ permissions:
 jobs:
   notify:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Check state change and notify Octo
         env:
@@ -47,7 +48,7 @@ jobs:
           PROJECT_GROUP_ID: ${{ inputs.project_group_id }}
         run: |
           python3 << 'PYEOF'
-          import os, json, urllib.request, sys
+          import os, json, urllib.request, urllib.error, sys
 
           conclusion = os.environ['CONCLUSION']
           # Cancelled runs are not real failures; skip silently
@@ -72,8 +73,12 @@ jobs:
               'Accept': 'application/vnd.github+json',
               'X-GitHub-Api-Version': '2022-11-28',
           })
-          with urllib.request.urlopen(req) as r:
-              runs = json.load(r)['workflow_runs']
+          try:
+              with urllib.request.urlopen(req, timeout=15) as r:
+                  runs = json.load(r)['workflow_runs']
+          except (urllib.error.HTTPError, urllib.error.URLError) as e:
+              print(f'ERROR: failed to fetch workflow runs: {e}')
+              sys.exit(1)
 
           # Filter to the same workflow by name
           same_wf = [r for r in runs if r['name'] == wf_name]
@@ -112,6 +117,9 @@ jobs:
               sys.exit(0)
 
           # Determine message
+          if prev_conclusion is None:
+              print(f'First run detected (no previous history), skipping notification.')
+              sys.exit(0)
           if curr_conclusion == 'failure':
               msg = (
                   f'❌ [{repo}] main CI 挂了\n\n'
@@ -142,8 +150,12 @@ jobs:
                   'payload': {'type': 1, 'content': message},
               }).encode()
               req = urllib.request.Request(send_url, data=body, headers=headers, method='POST')
-              with urllib.request.urlopen(req) as r:
-                  print(f'  → {group_id[:8]}... HTTP {r.status}')
+              try:
+                  with urllib.request.urlopen(req, timeout=15) as r:
+                      print(f'  → {group_id[:8]}... HTTP {r.status}')
+              except (urllib.error.HTTPError, urllib.error.URLError) as e:
+                  print(f'ERROR: failed to send message to {group_id[:8]}...: {e}')
+                  sys.exit(1)
 
           # Push to ci-status group and the repo's project group
           send('4ade985d984e432eb7fbdd0ad4f8118a', msg)
