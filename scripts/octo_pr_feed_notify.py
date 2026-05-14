@@ -55,6 +55,13 @@ def send(group_id, message):
             last_err = e
             if e.code in (429, 500, 502, 503, 504) and attempt < 3:
                 wait = 2 ** attempt
+                if e.code == 429:
+                    try:
+                        retry_after = int(e.headers.get('Retry-After', 0))
+                        if retry_after > 0:
+                            wait = max(retry_after, wait)
+                    except (ValueError, TypeError):
+                        pass
                 print(f'  WARN: HTTP {e.code} on attempt {attempt}, retrying in {wait}s...')
                 time.sleep(wait)
             else:

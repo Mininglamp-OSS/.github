@@ -22,7 +22,7 @@ on:
         type: number
         required: false
         default: 0
-        description: 'GitHub Actions workflow ID (numeric). Pass github.workflow_run.workflow_id or the workflow file id. Used to scope history lookup.'
+        description: 'Numeric workflow ID (strongly recommended). Without it, run history is fetched globally for the repo and may include other workflows. Pass ${{ github.workflow_run.workflow_id }} from caller.'
       run_url:
         type: string
         required: true

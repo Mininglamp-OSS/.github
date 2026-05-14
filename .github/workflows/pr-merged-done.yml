@@ -118,10 +118,11 @@ jobs:
             }
             // Normalize: strip emoji and punctuation, trim, lowercase — so "✅ Done" matches "done"
             const normalize = s => s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, '').trim();
-            const doneOption = statusField.options.find(o => normalize(o.name) === 'done');
+            const DONE_ALIASES = new Set(['done', '已完成', '完了', 'completed', '完成']);
+            const doneOption = statusField.options.find(o => DONE_ALIASES.has(normalize(o.name)));
             if (!doneOption) {
               const optionNames = statusField.options.map(o => o.name).join(', ');
-              core.setFailed(`No "Done" option found in Status field. Available options: ${optionNames}`);
+              core.setFailed(`No Done option found (tried aliases: ${[...DONE_ALIASES].join(', ')}). Available options: ${optionNames}`);
               return;
             }
             const projectId = project.id;

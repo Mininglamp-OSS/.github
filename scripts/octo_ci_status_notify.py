@@ -79,7 +79,7 @@ curr_created = current['created_at']
 # Previous: any run older than current (by created_at), same workflow name
 older = [r for r in all_runs
          if r['id'] != current['id']
-         and r['name'] == wf_name
+         and r['name'] == wf_name  # defensive; redundant when workflow_id is set (already scoped)
          and r['created_at'] < curr_created]
 previous = older[0] if older else None
 
@@ -103,7 +103,7 @@ FAILURE_LIKE = {'failure', 'timed_out', 'action_required', 'startup_failure'}
 
 # Determine message
 curr_failed = curr_conclusion in FAILURE_LIKE
-prev_failed = prev_conclusion in FAILURE_LIKE if prev_conclusion else False
+prev_failed = prev_conclusion in FAILURE_LIKE
 
 if curr_failed and not prev_failed:
     status_label = {'timed_out': '⏱️ timed out', 'action_required': '⚠️ action required',
@@ -113,7 +113,7 @@ if curr_failed and not prev_failed:
         f'工作流：{wf_name}\n'
         f'🔗 {run_url}'
     )
-elif not curr_failed and prev_failed:
+elif curr_conclusion == 'success' and prev_failed:
     msg = (
         f'✅ [{repo}] main CI 已恢复\n\n'
         f'工作流：{wf_name}\n'
@@ -149,6 +149,13 @@ def send(group_id, message):
             last_err = e
             if e.code in (429, 500, 502, 503, 504) and attempt < 3:
                 wait = 2 ** attempt
+                if e.code == 429:
+                    try:
+                        retry_after = int(e.headers.get('Retry-After', 0))
+                        if retry_after > 0:
+                            wait = max(retry_after, wait)
+                    except (ValueError, TypeError):
+                        pass
                 print(f'  WARN: HTTP {e.code} on attempt {attempt}, retrying in {wait}s...')
                 time.sleep(wait)
             else:
