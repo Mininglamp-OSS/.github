@@ -33,15 +33,23 @@ on:
       OCTO_BOT_TOKEN:
         required: true
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   notify:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Checkout scripts
+      - name: Checkout reusable-workflow scripts
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: Mininglamp-OSS/.github
+          ref: ${{ github.workflow_sha }}
+          path: _shared
+          sparse-checkout: scripts
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
 
       - name: Send to Octo
         env:
@@ -54,4 +62,4 @@ jobs:
           ISSUE_LABELS: ${{ inputs.issue_labels }}
           EVENT_ACTION: ${{ inputs.event_action }}
           PROJECT_GROUP_ID: ${{ inputs.project_group_id }}
-        run: python3 scripts/octo_issue_feed_notify.py
+        run: python3 _shared/scripts/octo_issue_feed_notify.py
