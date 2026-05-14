@@ -8,7 +8,7 @@ Not sure whether to open an Issue or a Discussion? Use this guide:
 
 ### Open an Issue when:
 - You found a **reproducible bug** — include version, environment, and steps to reproduce
-- You have a **concrete feature request** — need is clearly defined with a specific use case
+- You have a **small, concrete feature request** — well-scoped, no API or cross-repo impact
 
 ### Open a Discussion when:
 - You have a **usage question** or need help → [Q&A](https://github.com/Mininglamp-OSS/community/discussions/categories/q-a)
@@ -78,10 +78,20 @@ Use the repository's **Bug Report** issue template. Include:
 
 ## Suggesting Features
 
-Use the repository's **Feature Request** issue template. Describe:
-- The problem you're trying to solve
-- Your proposed solution
-- Any alternatives you've considered
+> **Significant features require a Discussion before an Issue.**
+> This refines the [Issue or Discussion?](#issue-or-discussion) rule above: even a concrete feature request that is significant in scope should start as a Discussion.
+> See [GOVERNANCE.md](https://github.com/Mininglamp-OSS/community/blob/main/GOVERNANCE.md) for the full process.
+
+Octo follows a **Discussion-first** approach for significant features:
+
+1. **Open a Discussion** in the [Ideas](https://github.com/Mininglamp-OSS/community/discussions/categories/ideas) category of the community repository. A structured template is pre-filled automatically. Describe the problem, your proposed solution, and alternatives you considered.
+2. **Discuss and refine.** Community members and the Project Lead will provide feedback. Iterate until there are no unresolved blocking concerns.
+3. **The Project Lead marks the outcome.** Once consensus is reached, the Discussion is closed as *accepted* and a tracking Issue is opened in the relevant repository, linked back to the Discussion.
+4. **The Issue is scheduled** on the [Octo Board](https://github.com/orgs/Mininglamp-OSS/projects) and implementation begins.
+
+**What counts as "significant"?** Roughly: anything that changes a public API, adds a new user-facing concept, affects more than one repository, or has notable UX or architectural implications. Bug-adjacent improvements, small ergonomic wins, and documentation changes are "minor" and may be filed directly as Issues using the **Feature Request** template.
+
+Not sure which path to take? Open a Discussion — the Project Lead will guide you.
 
 ## Code of Conduct
 
