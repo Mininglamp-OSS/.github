@@ -1,0 +1,36 @@
+# Auto-add issues and PRs to the org-level GitHub Project board.
+#
+# This is a reusable workflow: child repositories within the Mininglamp-OSS
+# organization can call it via `workflow_call` to share a single, centrally
+# maintained automation. It also runs directly for issues and pull requests
+# opened in the .github repository itself.
+#
+# Caller repos invoke it like:
+#   jobs:
+#     add-to-project:
+#       uses: Mininglamp-OSS/.github/.github/workflows/auto-add-to-project.yml@main
+#       secrets:
+#         PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+name: Auto add to project
+
+on:
+  workflow_call:
+    secrets:
+      PROJECT_TOKEN:
+        required: true
+  issues:
+    types: [opened]
+  pull_request_target:
+    types: [opened]
+
+permissions: {}
+
+jobs:
+  add-to-project:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add issue or PR to org project
+        uses: actions/add-to-project@244f685bbc3b7adfa8466e08b698b5577571133e # v1.0.2
+        with:
+          project-url: https://github.com/orgs/Mininglamp-OSS/projects/2
+          github-token: ${{ secrets.PROJECT_TOKEN }}
