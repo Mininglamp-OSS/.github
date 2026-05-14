@@ -1,54 +1,86 @@
-import os, json, urllib.request, urllib.error, sys
+import os, json, time, urllib.request, urllib.error, sys
 
-conclusion = os.environ['CONCLUSION']
+
+def require_env(name):
+    val = os.environ.get(name, '').strip()
+    if not val:
+        print(f'ERROR: required environment variable {name} is missing or empty')
+        sys.exit(2)
+    return val
+
+
+conclusion = require_env('CONCLUSION')
 # Cancelled runs are not real failures; skip silently
 if conclusion == 'cancelled':
     print('Cancelled run, skipping.')
     sys.exit(0)
 
-repo      = os.environ['REPO_NAME']
-wf_name   = os.environ['WORKFLOW_NAME']
-run_url   = os.environ['RUN_URL']
-proj_gid  = os.environ['PROJECT_GROUP_ID']
-gh_token  = os.environ['GITHUB_TOKEN']
-bot_token = os.environ['OCTO_BOT_TOKEN']
+repo      = require_env('REPO_NAME')
+wf_name   = require_env('WORKFLOW_NAME')
+run_url   = require_env('RUN_URL')
+proj_gid  = require_env('PROJECT_GROUP_ID')
+gh_token  = require_env('GITHUB_TOKEN')
+bot_token = require_env('OCTO_BOT_TOKEN')
 
-# Fetch recent completed runs on main branch
-api_url = (
-    f'https://api.github.com/repos/Mininglamp-OSS/{repo}/actions/runs'
-    f'?branch=main&status=completed&per_page=10'
-)
-req = urllib.request.Request(api_url, headers={
+workflow_id = int(os.environ.get('WORKFLOW_ID', 0) or 0)
+
+# 1. Fetch the current run precisely by run_id
+run_id = int(os.environ.get('RUN_ID', 0) or 0)
+current = None
+if run_id:
+    req_current = urllib.request.Request(
+        f'https://api.github.com/repos/Mininglamp-OSS/{repo}/actions/runs/{run_id}',
+        headers={
+            'Authorization': f'Bearer {gh_token}',
+            'Accept': 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+        }
+    )
+    try:
+        with urllib.request.urlopen(req_current, timeout=15) as r:
+            current = json.load(r)
+    except (urllib.error.HTTPError, urllib.error.URLError) as e:
+        print(f'ERROR: failed to fetch run {run_id}: {e}')
+        sys.exit(1)
+
+# 2. Fetch previous completed runs (scoped to this workflow if workflow_id is known)
+if workflow_id:
+    history_url = (
+        f'https://api.github.com/repos/Mininglamp-OSS/{repo}/actions/workflows/{workflow_id}/runs'
+        f'?branch=main&status=completed&per_page=30'
+    )
+else:
+    history_url = (
+        f'https://api.github.com/repos/Mininglamp-OSS/{repo}/actions/runs'
+        f'?branch=main&status=completed&per_page=30'
+    )
+req_hist = urllib.request.Request(history_url, headers={
     'Authorization': f'Bearer {gh_token}',
     'Accept': 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2022-11-28',
 })
 try:
-    with urllib.request.urlopen(req, timeout=15) as r:
-        runs = json.load(r)['workflow_runs']
+    with urllib.request.urlopen(req_hist, timeout=15) as r:
+        all_runs = json.load(r)['workflow_runs']
 except (urllib.error.HTTPError, urllib.error.URLError) as e:
-    print(f'ERROR: failed to fetch workflow runs: {e}')
+    print(f'ERROR: failed to fetch workflow run history: {e}')
     sys.exit(1)
 
-# Filter to the same workflow by name
-same_wf = [r for r in runs if r['name'] == wf_name]
+# If run_id wasn't passed or lookup failed, fall back to first matching in history
+if not current:
+    same_wf = [r for r in all_runs if r['name'] == wf_name]
+    if not same_wf:
+        print('No matching runs found, skipping.')
+        sys.exit(0)
+    current = same_wf[0]
 
-if not same_wf:
-    print('No matching runs found, skipping.')
-    sys.exit(0)
+curr_created = current['created_at']
 
-# Use run_id to precisely identify the current run (avoids race conditions
-# when two runs complete close together).
-run_id = int(os.environ.get('RUN_ID', 0))
-matched = [r for r in same_wf if r['id'] == run_id]
-if not matched:
-    print('WARN: run_id %s not found in recent runs window, falling back to same_wf[0]' % run_id)
-current  = matched[0] if matched else same_wf[0]
-# Only consider runs created before current to avoid picking a later
-# concurrent run as "previous" (which would flip alert/recovery semantics).
-older    = [r for r in same_wf
-            if r['id'] != current['id']
-            and r['created_at'] < current['created_at']]
+# Previous: any run older than current (by created_at), same workflow name
+older = [r for r in all_runs
+         if r['id'] != current['id']
+         and r['name'] == wf_name  # defensive; redundant when workflow_id is set (already scoped)
+         and r['created_at'] < curr_created]
 previous = older[0] if older else None
 
 curr_conclusion = current['conclusion']
@@ -66,14 +98,22 @@ if prev_conclusion is None:
     print('First run detected (no previous history), skipping notification.')
     sys.exit(0)
 
+# Failure-like conclusions: treat all of these as "CI broken"
+FAILURE_LIKE = {'failure', 'timed_out', 'action_required', 'startup_failure'}
+
 # Determine message
-if curr_conclusion == 'failure':
+curr_failed = curr_conclusion in FAILURE_LIKE
+prev_failed = prev_conclusion in FAILURE_LIKE
+
+if curr_failed and not prev_failed:
+    status_label = {'timed_out': '⏱️ timed out', 'action_required': '⚠️ action required',
+                    'startup_failure': '💥 startup failed'}.get(curr_conclusion, '❌ failed')
     msg = (
-        f'❌ [{repo}] main CI 挂了\n\n'
+        f'🚨 [{repo}] main CI {status_label}\n\n'
         f'工作流：{wf_name}\n'
         f'🔗 {run_url}'
     )
-elif curr_conclusion == 'success' and prev_conclusion == 'failure':
+elif curr_conclusion == 'success' and prev_failed:
     msg = (
         f'✅ [{repo}] main CI 已恢复\n\n'
         f'工作流：{wf_name}\n'
@@ -98,13 +138,38 @@ def send(group_id, message):
         'channel_type': 2,
         'payload': {'type': 1, 'content': message},
     }).encode()
-    req = urllib.request.Request(send_url, data=body, headers=headers, method='POST')
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            print(f'  → {group_id[:8]}... HTTP {r.status}')
-    except (urllib.error.HTTPError, urllib.error.URLError) as e:
-        print(f'ERROR: failed to send message to {group_id[:8]}...: {e}')
-        failed.append(group_id)
+    last_err = None
+    for attempt in range(1, 4):
+        req = urllib.request.Request(send_url, data=body, headers=headers, method='POST')
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                print(f'  → {group_id[:8]}... HTTP {r.status}')
+                return  # success
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code in (429, 500, 502, 503, 504) and attempt < 3:
+                wait = 2 ** attempt
+                if e.code == 429:
+                    try:
+                        retry_after = int(e.headers.get('Retry-After', 0))
+                        if retry_after > 0:
+                            wait = max(retry_after, wait)
+                    except (ValueError, TypeError):
+                        pass
+                print(f'  WARN: HTTP {e.code} on attempt {attempt}, retrying in {wait}s...')
+                time.sleep(wait)
+            else:
+                break
+        except (urllib.error.URLError, TimeoutError) as e:
+            last_err = e
+            if attempt < 3:
+                wait = 2 ** attempt
+                print(f'  WARN: {e} on attempt {attempt}, retrying in {wait}s...')
+                time.sleep(wait)
+            else:
+                break
+    print(f'ERROR: failed to send message to {group_id[:8]}...: {last_err}')
+    failed.append(group_id)
 
 # Push to ci-status group and the repo's project group
 send('4ade985d984e432eb7fbdd0ad4f8118a', msg)

@@ -20,6 +20,7 @@ permissions: {}
 jobs:
   move-to-done:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Move closed issues to Done
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7.1.0
@@ -32,6 +33,19 @@ jobs:
             const pr = context.payload.pull_request;
             if (!pr) {
               console.log('No pull_request payload; nothing to do.');
+              return;
+            }
+
+            // Guard: only act on merged PRs (not closed-without-merge)
+            if (!pr.merged) {
+              console.log(`PR #${pr.number} was closed without merge; skipping.`);
+              return;
+            }
+
+            // Guard: only act on merges into the default branch
+            const defaultBranch = context.payload.repository?.default_branch || 'main';
+            if (pr.base.ref !== defaultBranch) {
+              console.log(`PR #${pr.number} merged into '${pr.base.ref}', not default branch '${defaultBranch}'; skipping.`);
               return;
             }
 
@@ -82,10 +96,16 @@ jobs:
                 }
               }
             `;
-            const projectResp = await github.graphql(projectQuery, {
-              org: ORG,
-              number: PROJECT_NUMBER,
-            });
+            let projectResp;
+            try {
+              projectResp = await github.graphql(projectQuery, {
+                org: ORG,
+                number: PROJECT_NUMBER,
+              });
+            } catch (err) {
+              core.setFailed(`GraphQL project query failed: ${err.message}`);
+              return;
+            }
             const project = projectResp.organization?.projectV2;
             if (!project) {
               core.setFailed(`Project ${ORG}/#${PROJECT_NUMBER} not found or token lacks access.`);
@@ -96,9 +116,13 @@ jobs:
               core.setFailed('Status field not found on project.');
               return;
             }
-            const doneOption = statusField.options.find(o => o.name.toLowerCase() === 'done');
+            // Normalize: strip emoji and punctuation, trim, lowercase — so "✅ Done" matches "done"
+            const normalize = s => s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, '').trim();
+            const DONE_ALIASES = new Set(['done', '已完成', '完了', 'completed', '完成']);
+            const doneOption = statusField.options.find(o => DONE_ALIASES.has(normalize(o.name)));
             if (!doneOption) {
-              core.setFailed('No "Done" option in Status field.');
+              const optionNames = statusField.options.map(o => o.name).join(', ');
+              core.setFailed(`No Done option found (tried aliases: ${[...DONE_ALIASES].join(', ')}). Available options: ${optionNames}`);
               return;
             }
             const projectId = project.id;
@@ -137,7 +161,13 @@ jobs:
             let prItemId = null;
             let cursor = null;
             do {
-              const page = await github.graphql(itemsQuery, { projectId, cursor });
+              let page;
+              try {
+                page = await github.graphql(itemsQuery, { projectId, cursor });
+              } catch (err) {
+                core.setFailed(`GraphQL items pagination failed: ${err.message}`);
+                return;
+              }
               const conn = page.node.items;
               for (const item of conn.nodes) {
                 const c = item.content;

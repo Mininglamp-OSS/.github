@@ -1,7 +1,16 @@
-import os, json, sys, urllib.request, urllib.error
+import os, json, sys, time, urllib.request, urllib.error
 
-action = os.environ['EVENT_ACTION']
-merged = os.environ['PR_MERGED'].lower() == 'true'
+
+def require_env(name):
+    val = os.environ.get(name, '').strip()
+    if not val:
+        print(f'ERROR: required environment variable {name} is missing or empty')
+        sys.exit(2)
+    return val
+
+
+action = require_env('EVENT_ACTION')
+merged = require_env('PR_MERGED').lower() == 'true'
 
 if action == 'closed':
     emoji = '🟢' if merged else '🔴'
@@ -14,33 +23,62 @@ dels  = int(os.environ.get('PR_DELETIONS', 0) or 0)
 files = int(os.environ.get('PR_CHANGED_FILES', 0) or 0)
 stats_part = f' · +{adds} -{dels} · {files} files' if (adds or dels or files) else ''
 
-repo   = os.environ['REPO_NAME']
-num    = os.environ['PR_NUMBER']
-title  = os.environ['PR_TITLE']
-url    = os.environ['PR_URL']
-author = os.environ['PR_AUTHOR']
+repo   = require_env('REPO_NAME')
+num    = require_env('PR_NUMBER')
+title  = require_env('PR_TITLE')
+url    = require_env('PR_URL')
+author = require_env('PR_AUTHOR')
 
 feed_msg = f"{emoji} [{repo}] PR #{num} · {title}\n👤 {author}{stats_part}\n🔗 {url}"
 proj_msg = f"{emoji} PR #{num} · {title}\n👤 {author}{stats_part}\n🔗 {url}"
 
 api = 'https://im.deepminer.com.cn/api/v1/bot/sendMessage'
-token = os.environ['OCTO_BOT_TOKEN']
+token = require_env('OCTO_BOT_TOKEN')
 headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
 
 failed = []
 
-def send(group_id, msg):
-    body = json.dumps({'channel_id': group_id, 'channel_type': 2,
-                       'payload': {'type': 1, 'content': msg}}).encode()
-    req = urllib.request.Request(api, data=body, headers=headers, method='POST')
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            print(f'→ {group_id[:8]}... {r.status}')
-    except (urllib.error.HTTPError, urllib.error.URLError) as e:
-        print(f'ERROR: failed to send message to {group_id[:8]}...: {e}')
-        failed.append(group_id)
+def send(group_id, message):
+    body = json.dumps({
+        'channel_id': group_id,
+        'channel_type': 2,
+        'payload': {'type': 1, 'content': message},
+    }).encode()
+    last_err = None
+    for attempt in range(1, 4):
+        req = urllib.request.Request(api, data=body, headers=headers, method='POST')
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                print(f'  → {group_id[:8]}... HTTP {r.status}')
+                return  # success
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code in (429, 500, 502, 503, 504) and attempt < 3:
+                wait = 2 ** attempt
+                if e.code == 429:
+                    try:
+                        retry_after = int(e.headers.get('Retry-After', 0))
+                        if retry_after > 0:
+                            wait = max(retry_after, wait)
+                    except (ValueError, TypeError):
+                        pass
+                print(f'  WARN: HTTP {e.code} on attempt {attempt}, retrying in {wait}s...')
+                time.sleep(wait)
+            else:
+                break
+        except (urllib.error.URLError, TimeoutError) as e:
+            last_err = e
+            if attempt < 3:
+                wait = 2 ** attempt
+                print(f'  WARN: {e} on attempt {attempt}, retrying in {wait}s...')
+                time.sleep(wait)
+            else:
+                break
+    print(f'ERROR: failed to send message to {group_id[:8]}...: {last_err}')
+    failed.append(group_id)
 
+proj_gid = require_env('PROJECT_GROUP_ID')
 send('1c303c142e9840f2a9b46c10b0972e8d', feed_msg)
-send(os.environ['PROJECT_GROUP_ID'], proj_msg)
+send(proj_gid, proj_msg)
 if failed:
     sys.exit(1)

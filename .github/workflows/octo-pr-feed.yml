@@ -54,7 +54,10 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           repository: Mininglamp-OSS/.github
-          ref: ${{ github.workflow_sha }}
+          ref: main
+          # NOTE: pinning to main; scripts and workflow always come from the
+          # same protected branch. For stricter version lock, pass a shared_ref
+          # input from caller workflows.
           path: _shared
           sparse-checkout: scripts
           sparse-checkout-cone-mode: false

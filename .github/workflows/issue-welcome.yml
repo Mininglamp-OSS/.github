@@ -29,7 +29,7 @@ jobs:
             // Issue type detection via labels (auto-applied by issue templates)
             const labels = issue.labels.map(l => l.name);
             const isBug     = labels.includes('bug');
-            const isFeature = labels.includes('feature');
+            const isFeature = labels.includes('feature') || labels.includes('enhancement');
 
             let body;
 
