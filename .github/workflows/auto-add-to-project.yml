@@ -5,13 +5,26 @@
 # maintained automation. It also runs directly for issues and pull requests
 # opened in the .github repository itself.
 #
+# Why a workflow instead of GitHub's native Auto-add rule:
+# GitHub Projects has a built-in Auto-add workflow, but it can only be
+# configured through the Project's web UI — there is no API to manage it.
+# That violates Infrastructure as Code: the rule cannot be reviewed,
+# version-controlled, or reproduced across projects from this repo. This
+# Actions-based approach keeps the automation declarative and auditable.
+#
+# Direct-trigger requirements:
+# When this workflow runs directly (issues / pull_request_target events in
+# this .github repo), it needs a PROJECT_TOKEN secret configured on the
+# .github repository itself (or as an organization-level secret available
+# to it). The workflow_call path receives the secret from the caller.
+#
 # Caller repos invoke it like:
 #   jobs:
 #     add-to-project:
 #       uses: Mininglamp-OSS/.github/.github/workflows/auto-add-to-project.yml@main
 #       secrets:
 #         PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-name: Auto add to project
+name: Auto add to project (reusable)
 
 on:
   workflow_call:
@@ -20,6 +33,14 @@ on:
         required: true
   issues:
     types: [opened]
+  # pull_request_target (rather than pull_request) is required so that PRs
+  # opened from forks can access the PROJECT_TOKEN secret — pull_request
+  # runs in the fork's context and has no access to secrets.
+  #
+  # SECURITY: do NOT add `actions/checkout` (or otherwise check out the PR
+  # head ref) to this workflow. pull_request_target runs in the base repo's
+  # privileged context with access to PROJECT_TOKEN; checking out untrusted
+  # PR code here would let a malicious fork exfiltrate the token.
   pull_request_target:
     types: [opened]
 
@@ -28,6 +49,7 @@ permissions: {}
 jobs:
   add-to-project:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Add issue or PR to org project
         uses: actions/add-to-project@244f685bbc3b7adfa8466e08b698b5577571133e # v1.0.2
