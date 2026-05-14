@@ -33,6 +33,8 @@ on:
       OCTO_BOT_TOKEN:
         required: true
 
+permissions: {}
+
 jobs:
   notify:
     runs-on: ubuntu-latest
