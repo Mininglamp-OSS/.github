@@ -21,7 +21,7 @@
 # Caller repos invoke it like:
 #   jobs:
 #     add-to-project:
-#       uses: Mininglamp-OSS/.github/.github/workflows/auto-add-to-project.yml@main
+#       uses: Mininglamp-OSS/.github/.github/workflows/auto-add-to-project.yml@v1
 #       secrets:
 #         PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
 name: Auto add to project (reusable)
