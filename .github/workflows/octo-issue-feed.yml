@@ -29,6 +29,11 @@ on:
       project_group_id:
         type: string
         required: true
+      api_base_url:
+        type: string
+        required: false
+        default: 'https://im.deepminer.com.cn/api'
+        description: 'Octo IM API base URL (without trailing slash)'
     secrets:
       OCTO_BOT_TOKEN:
         required: true
@@ -51,6 +56,7 @@ jobs:
           ISSUE_LABELS: ${{ inputs.issue_labels }}
           EVENT_ACTION: ${{ inputs.event_action }}
           PROJECT_GROUP_ID: ${{ inputs.project_group_id }}
+          API_BASE_URL: ${{ inputs.api_base_url }}
         run: |
           python3 - << 'PYEOF'
           import os, json, sys, time, urllib.request, urllib.error
@@ -82,7 +88,7 @@ jobs:
           feed_msg = f"{emoji} [{repo}] Issue #{num} · {title}\n👤 {author}{labels_part}\n🔗 {url}"
           proj_msg = f"{emoji} Issue #{num} · {title}\n👤 {author}{labels_part}\n🔗 {url}"
           
-          api = 'https://im.deepminer.com.cn/api/v1/bot/sendMessage'
+          api = os.environ.get('API_BASE_URL', 'https://im.deepminer.com.cn/api').rstrip('/') + '/v1/bot/sendMessage'
           token = require_env('OCTO_BOT_TOKEN')
           headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
           
