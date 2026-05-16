@@ -59,7 +59,7 @@ jobs:
           API_BASE_URL: ${{ inputs.api_base_url }}
         run: |
           python3 - << 'PYEOF'
-          import os, json, sys, time, urllib.request, urllib.error
+          import os, json, re, sys, time, urllib.request, urllib.error
           
           
           def require_env(name):
@@ -76,7 +76,6 @@ jobs:
               return s[:max_len]
           
           
-          import re
           def require_group_id(name):
               val = require_env(name)
               if not re.fullmatch(r'[0-9a-f]{32}', val):
