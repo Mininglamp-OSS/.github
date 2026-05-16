@@ -136,6 +136,15 @@ jobs:
           proj_gid = require_env('PROJECT_GROUP_ID')
           send('151a45970e1546afa9e947ac36a5c4e5', feed_msg)
           send(proj_gid, proj_msg)
+
+          # Trigger IssueTriage bot on newly opened issues
+          if action == 'opened':
+              triage_msg = (
+                  '@[27pmzxx8nad78c9d01e_bot:Octo 助理-IssueTriage] [TRIAGE] '
+                  f'https://github.com/Mininglamp-OSS/{repo}/issues/{num}'
+              )
+              send('151a45970e1546afa9e947ac36a5c4e5', triage_msg)
+
           if failed:
               sys.exit(1)
           PYEOF
