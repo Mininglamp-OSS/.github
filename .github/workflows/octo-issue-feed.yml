@@ -88,7 +88,7 @@ jobs:
           emoji = {'opened': '🆕', 'closed': '✅', 'reopened': '🔄', 'labeled': '🏷️'}.get(action, 'ℹ️')
           
           try:
-              labels = json.loads(os.environ.get('ISSUE_LABELS', '[]'))
+              labels = [sanitize_text(l, max_len=64) for l in json.loads(os.environ.get('ISSUE_LABELS', '[]'))]
               labels_part = ' · 🏷️ ' + ', '.join(labels) if labels else ''
           except Exception:
               labels_part = ''

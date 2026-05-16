@@ -59,13 +59,21 @@ jobs:
           API_BASE_URL: ${{ inputs.api_base_url }}
         run: |
           python3 - << 'PYEOF'
-          import os, json, time, urllib.request, urllib.error, sys
+          import os, json, re, time, urllib.request, urllib.error, sys
           
           
           def require_env(name):
               val = os.environ.get(name, '').strip()
               if not val:
                   print(f'ERROR: required environment variable {name} is missing or empty')
+                  sys.exit(2)
+              return val
+
+
+          def require_group_id(name):
+              val = require_env(name)
+              if not re.fullmatch(r'[0-9a-f]{32}', val):
+                  print(f'ERROR: {name} must be a 32-char lowercase hex group id')
                   sys.exit(2)
               return val
           
@@ -79,7 +87,7 @@ jobs:
           repo      = require_env('REPO_NAME')
           wf_name   = require_env('WORKFLOW_NAME')
           run_url   = require_env('RUN_URL')
-          proj_gid  = require_env('PROJECT_GROUP_ID')
+          proj_gid  = require_group_id('PROJECT_GROUP_ID')
           gh_token  = require_env('GITHUB_TOKEN')
           bot_token = require_env('OCTO_BOT_TOKEN')
           

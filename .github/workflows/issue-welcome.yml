@@ -20,6 +20,12 @@ jobs:
               core.setFailed('This workflow must be called from an issues event. context.payload.issue is undefined.');
               return;
             }
+            // Skip bot-opened issues (Dependabot, etc.)
+            if (issue.user.type === 'Bot') {
+              console.log('Skipping bot-opened issue');
+              return;
+            }
+
             const marker = '<!-- octo-issue-welcome:v1 -->';
             const existingComments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
@@ -29,12 +35,6 @@ jobs:
             });
             if (existingComments.some(c => c.user.type === 'Bot' && c.body && c.body.includes(marker))) {
               console.log('Welcome comment already posted, skipping (idempotent).');
-              return;
-            }
-
-            // Skip bot-opened issues (Dependabot, etc.)
-            if (issue.user.type === 'Bot') {
-              console.log('Skipping bot-opened issue');
               return;
             }
 
