@@ -43,6 +43,10 @@ on:
         required: false
         default: 'https://im.deepminer.com.cn/api'
         description: 'Octo IM API base URL (without trailing slash)'
+      feed_group_id:
+        type: string
+        required: true
+        description: 'Octo IM feed/broadcast channel group ID (pr-feed channel)'
     secrets:
       OCTO_BOT_TOKEN:
         required: true
@@ -68,6 +72,7 @@ jobs:
           PR_CHANGED_FILES: ${{ inputs.pr_changed_files }}
           EVENT_ACTION: ${{ inputs.event_action }}
           PROJECT_GROUP_ID: ${{ inputs.project_group_id }}
+          FEED_GROUP_ID: ${{ inputs.feed_group_id }}
           API_BASE_URL: ${{ inputs.api_base_url }}
         run: |
           python3 - << 'PYEOF'
@@ -150,8 +155,9 @@ jobs:
               print(f'ERROR: failed to send message to {group_id[:8]}...: {last_err}')
               failed.append(group_id)
           
+          feed_gid = require_env('FEED_GROUP_ID')
           proj_gid = require_env('PROJECT_GROUP_ID')
-          send('1c303c142e9840f2a9b46c10b0972e8d', feed_msg)
+          send(feed_gid, feed_msg)
           send(proj_gid, proj_msg)
           if failed:
               sys.exit(1)
