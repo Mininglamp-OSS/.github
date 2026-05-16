@@ -6,7 +6,7 @@
 
 <p>
   <a href="https://github.com/Mininglamp-OSS"><img src="https://img.shields.io/github/stars/Mininglamp-OSS?affiliations=OWNER&style=social&label=Total%20Stars" alt="GitHub Org Stars" /></a>&nbsp;
-  <a href="https://github.com/Mininglamp-OSS/community/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License" /></a>&nbsp;
+  <a href="https://github.com/Mininglamp-OSS/.github/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License" /></a>&nbsp;
   <a href="https://discord.gg/vj9Vsj9hSB"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
 </p>
 
