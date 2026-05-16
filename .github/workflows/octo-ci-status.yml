@@ -20,9 +20,8 @@ on:
         default: 0
       workflow_id:
         type: number
-        required: false
-        default: 0
-        description: 'Numeric workflow ID (strongly recommended). Without it, run history is fetched globally for the repo and may include other workflows. Pass ${{ github.workflow_run.workflow_id }} from caller.'
+        required: true
+        description: 'Numeric workflow ID. Pass ${{ github.event.workflow_run.workflow_id }} from caller.'
       run_url:
         type: string
         required: true
@@ -139,10 +138,14 @@ jobs:
           curr_created = current['created_at']
           
           # Previous: any run older than current (by created_at), same workflow name
-          older = [r for r in all_runs
-                   if r['id'] != current['id']
-                   and r['name'] == wf_name  # defensive; redundant when workflow_id is set (already scoped)
-                   and r['created_at'] < curr_created]
+          older = sorted(
+              [r for r in all_runs
+               if r['id'] != current['id']
+               and r['name'] == wf_name  # defensive; redundant when workflow_id is set (already scoped)
+               and r['created_at'] < curr_created],
+              key=lambda r: r['created_at'],
+              reverse=True,
+          )
           previous = older[0] if older else None
           
           curr_conclusion = current['conclusion']
@@ -186,7 +189,14 @@ jobs:
               sys.exit(0)
           
           # Send to Octo IM
-          send_url = os.environ.get('API_BASE_URL', 'https://im.deepminer.com.cn/api').rstrip('/') + '/v1/bot/sendMessage'
+          ALLOWED_API_BASES = {
+              'https://im.deepminer.com.cn/api',
+          }
+          _api_base = os.environ.get('API_BASE_URL', 'https://im.deepminer.com.cn/api').rstrip('/')
+          if _api_base not in ALLOWED_API_BASES:
+              print(f'ERROR: API_BASE_URL is not in the allowlist: {_api_base}')
+              sys.exit(2)
+          send_url = _api_base + '/v1/bot/sendMessage'
           headers  = {
               'Authorization': f'Bearer {bot_token}',
               'Content-Type': 'application/json',

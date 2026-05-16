@@ -70,6 +70,21 @@ jobs:
               return val
           
           
+          def sanitize_text(s, max_len=300):
+              s = str(s or '')
+              s = s.replace('\r', ' ').replace('\n', ' ')
+              return s[:max_len]
+          
+          
+          import re
+          def require_group_id(name):
+              val = require_env(name)
+              if not re.fullmatch(r'[0-9a-f]{32}', val):
+                  print(f'ERROR: {name} must be a 32-char lowercase hex group id')
+                  sys.exit(2)
+              return val
+          
+          
           action = require_env('EVENT_ACTION')
           emoji = {'opened': '🆕', 'closed': '✅', 'reopened': '🔄', 'labeled': '🏷️'}.get(action, 'ℹ️')
           
@@ -81,14 +96,21 @@ jobs:
           
           repo  = require_env('REPO_NAME')
           num   = require_env('ISSUE_NUMBER')
-          title = require_env('ISSUE_TITLE')
+          title = sanitize_text(require_env('ISSUE_TITLE'), max_len=300)
           url   = require_env('ISSUE_URL')
-          author = require_env('ISSUE_AUTHOR')
+          author = sanitize_text(require_env('ISSUE_AUTHOR'), max_len=80)
           
           feed_msg = f"{emoji} [{repo}] Issue #{num} · {title}\n👤 {author}{labels_part}\n🔗 {url}"
           proj_msg = f"{emoji} Issue #{num} · {title}\n👤 {author}{labels_part}\n🔗 {url}"
           
-          api = os.environ.get('API_BASE_URL', 'https://im.deepminer.com.cn/api').rstrip('/') + '/v1/bot/sendMessage'
+          ALLOWED_API_BASES = {
+              'https://im.deepminer.com.cn/api',
+          }
+          _api_base = os.environ.get('API_BASE_URL', 'https://im.deepminer.com.cn/api').rstrip('/')
+          if _api_base not in ALLOWED_API_BASES:
+              print(f'ERROR: API_BASE_URL is not in the allowlist: {_api_base}')
+              sys.exit(2)
+          api = _api_base + '/v1/bot/sendMessage'
           token = require_env('OCTO_BOT_TOKEN')
           headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
           
@@ -133,7 +155,7 @@ jobs:
               print(f'ERROR: failed to send message to {group_id[:8]}...: {last_err}')
               failed.append(group_id)
           
-          proj_gid = require_env('PROJECT_GROUP_ID')
+          proj_gid = require_group_id('PROJECT_GROUP_ID')
           send('151a45970e1546afa9e947ac36a5c4e5', feed_msg)
           send(proj_gid, proj_msg)
 
