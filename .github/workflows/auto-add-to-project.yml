@@ -24,6 +24,19 @@
 #       uses: Mininglamp-OSS/.github/.github/workflows/auto-add-to-project.yml@v1
 #       secrets:
 #         PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+#
+# Known callers:
+#   - octo-web
+#   - octo-adapters
+#   - octo-matter
+#   - octo-smart-summary
+#   - octo-admin
+#   - octo-lib
+#   - octo-deployment
+#   - octo-server
+#
+# No "concurrency:" group is defined because actions/add-to-project is
+# idempotent on already-added items — concurrent runs are harmless.
 name: Auto add to project (reusable)
 
 on:
