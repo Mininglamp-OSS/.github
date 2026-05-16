@@ -7,6 +7,9 @@ jobs:
   welcome:
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    concurrency:
+      group: welcome-${{ github.event.issue.number }}
+      cancel-in-progress: false
     permissions:
       issues: write
     steps:
@@ -33,7 +36,7 @@ jobs:
               issue_number: issue.number,
               per_page: 100
             });
-            if (existingComments.some(c => c.user.type === 'Bot' && c.body && c.body.includes(marker))) {
+            if (existingComments.some(c => c.body && c.body.includes(marker))) {
               console.log('Welcome comment already posted, skipping (idempotent).');
               return;
             }

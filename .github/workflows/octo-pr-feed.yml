@@ -42,7 +42,7 @@ on:
         type: string
         required: false
         default: 'https://im.deepminer.com.cn/api'
-        description: 'Octo IM API base URL (without trailing slash)'
+        description: 'Octo IM API base URL. Only the production endpoint is allowlisted; any other value will cause the workflow to fail.'
       feed_group_id:
         type: string
         required: true

@@ -33,7 +33,7 @@ on:
         type: string
         required: false
         default: 'https://im.deepminer.com.cn/api'
-        description: 'Octo IM API base URL (without trailing slash)'
+        description: 'Octo IM API base URL. Only the production endpoint is allowlisted; any other value will cause the workflow to fail.'
     secrets:
       OCTO_BOT_TOKEN:
         required: true
@@ -98,6 +98,7 @@ jobs:
           title = sanitize_text(require_env('ISSUE_TITLE'), max_len=300)
           url   = require_env('ISSUE_URL')
           author = sanitize_text(require_env('ISSUE_AUTHOR'), max_len=80)
+          proj_gid = require_group_id('PROJECT_GROUP_ID')
           
           feed_msg = f"{emoji} [{repo}] Issue #{num} · {title}\n👤 {author}{labels_part}\n🔗 {url}"
           proj_msg = f"{emoji} Issue #{num} · {title}\n👤 {author}{labels_part}\n🔗 {url}"
@@ -154,7 +155,6 @@ jobs:
               print(f'ERROR: failed to send message to {group_id[:8]}...: {last_err}')
               failed.append(group_id)
           
-          proj_gid = require_group_id('PROJECT_GROUP_ID')
           send('151a45970e1546afa9e947ac36a5c4e5', feed_msg)
           send(proj_gid, proj_msg)
 
