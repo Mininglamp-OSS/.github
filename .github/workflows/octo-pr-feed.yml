@@ -88,15 +88,27 @@ jobs:
           
           
           def sanitize_text(s, max_len=300):
+              """Strip control characters (CR, LF, tabs, etc.) to prevent IM message injection."""
               s = str(s or '')
-              s = s.replace('\r', ' ').replace('\n', ' ')
+              # Strip all C0 control characters (U+0000-U+001F) and DEL (U+007F)
+              s = re.sub(r'[\x00-\x1f\x7f]', ' ', s)
               return s[:max_len]
           
           
           def require_group_id(name):
+              """Validate format only (32-char hex); this is not an authorization check."""
               val = require_env(name)
               if not re.fullmatch(r'[0-9a-f]{32}', val):
                   print(f'ERROR: {name} must be a 32-char lowercase hex group id')
+                  sys.exit(2)
+              return val
+
+
+          def require_repo_name(name):
+              """Validate repo name to prevent path traversal in GitHub API URLs."""
+              val = require_env(name)
+              if not re.fullmatch(r'[A-Za-z0-9._-]{1,100}', val):
+                  print(f'ERROR: {name} contains invalid characters: {val!r}')
                   sys.exit(2)
               return val
           
@@ -115,7 +127,7 @@ jobs:
           files = int(os.environ.get('PR_CHANGED_FILES', 0) or 0)
           stats_part = f' · +{adds} -{dels} · {files} files' if (adds or dels or files) else ''
           
-          repo   = require_env('REPO_NAME')
+          repo   = require_repo_name('REPO_NAME')
           num    = require_env('PR_NUMBER')
           title  = sanitize_text(require_env('PR_TITLE'), max_len=300)
           url    = require_env('PR_URL')
@@ -128,7 +140,7 @@ jobs:
               'https://im.deepminer.com.cn/api',
           }
           _api_base = os.environ.get('API_BASE_URL', 'https://im.deepminer.com.cn/api').rstrip('/')
-          if _api_base not in ALLOWED_API_BASES:
+          if _api_base.lower() not in {b.lower() for b in ALLOWED_API_BASES}:
               print(f'ERROR: API_BASE_URL is not in the allowlist: {_api_base}')
               sys.exit(2)
           api = _api_base + '/v1/bot/sendMessage'

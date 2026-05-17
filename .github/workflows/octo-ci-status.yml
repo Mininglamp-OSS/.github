@@ -71,9 +71,19 @@ jobs:
 
 
           def require_group_id(name):
+              """Validate format only (32-char hex); this is not an authorization check."""
               val = require_env(name)
               if not re.fullmatch(r'[0-9a-f]{32}', val):
                   print(f'ERROR: {name} must be a 32-char lowercase hex group id')
+                  sys.exit(2)
+              return val
+
+
+          def require_repo_name(name):
+              """Validate repo name to prevent path traversal in GitHub API URLs."""
+              val = require_env(name)
+              if not re.fullmatch(r'[A-Za-z0-9._-]{1,100}', val):
+                  print(f'ERROR: {name} contains invalid characters: {val!r}')
                   sys.exit(2)
               return val
           
@@ -84,7 +94,7 @@ jobs:
               print('Cancelled run, skipping.')
               sys.exit(0)
           
-          repo      = require_env('REPO_NAME')
+          repo      = require_repo_name('REPO_NAME')
           wf_name   = require_env('WORKFLOW_NAME')
           run_url   = require_env('RUN_URL')
           proj_gid  = require_group_id('PROJECT_GROUP_ID')
@@ -201,7 +211,7 @@ jobs:
               'https://im.deepminer.com.cn/api',
           }
           _api_base = os.environ.get('API_BASE_URL', 'https://im.deepminer.com.cn/api').rstrip('/')
-          if _api_base not in ALLOWED_API_BASES:
+          if _api_base.lower() not in {b.lower() for b in ALLOWED_API_BASES}:
               print(f'ERROR: API_BASE_URL is not in the allowlist: {_api_base}')
               sys.exit(2)
           send_url = _api_base + '/v1/bot/sendMessage'
