@@ -12,8 +12,7 @@ Not sure whether to open an Issue or a Discussion? Use this guide:
 
 ### Open a Discussion when:
 - You have a **usage question** or need help → [Q&A](https://github.com/Mininglamp-OSS/community/discussions/categories/q-a)
-- You have a **significant feature idea** — changes a public API, adds a new user-facing concept, affects more than one repo, or has notable UX/architectural impact → [Ideas](https://github.com/Mininglamp-OSS/community/discussions/categories/ideas)
-- You have an **early-stage idea** to share → [Ideas](https://github.com/Mininglamp-OSS/community/discussions/categories/ideas)
+- You have a **feature idea** — early-stage exploration or a significant proposal (public API change, cross-repo impact, new user-facing concept, notable UX/architecture) → [Ideas](https://github.com/Mininglamp-OSS/community/discussions/categories/ideas)
 - You built something with Octo → [Show and tell](https://github.com/Mininglamp-OSS/community/discussions/categories/show-and-tell)
 - You're not sure → open a Discussion; maintainers will convert it to an Issue if needed
 
@@ -83,11 +82,11 @@ Use the repository's **Bug Report** issue template. Include:
 > See [GOVERNANCE.md](https://github.com/Mininglamp-OSS/community/blob/main/GOVERNANCE.md) for the full process.
 
 1. **Open a Discussion** in the [Ideas](https://github.com/Mininglamp-OSS/community/discussions/categories/ideas) category of the community repository. A structured template is pre-filled automatically. Describe the problem, your proposed solution, and alternatives you considered.
-2. **Discuss and refine.** Community members and the Project Lead (see [GOVERNANCE.md](https://github.com/Mininglamp-OSS/community/blob/main/GOVERNANCE.md)) will provide feedback. Iterate until there are no unresolved blocking concerns.
-3. **The Project Lead marks the outcome.** Accepted Discussions are converted to a tracking Issue in the relevant repository, linked back to the Discussion. Declined or deferred outcomes are recorded in the Discussion with a rationale — see [GOVERNANCE.md](https://github.com/Mininglamp-OSS/community/blob/main/GOVERNANCE.md) for the full decision table.
+2. **Discuss and refine.** Community members and the Project Lead will provide feedback. Iterate until there are no unresolved blocking concerns.
+3. **The Project Lead marks the outcome.** Accepted Discussions are converted to a tracking Issue in the relevant repository, linked back to the Discussion. Declined or deferred outcomes are recorded with a rationale.
 4. **The Issue is scheduled** on the [Octo Board](https://github.com/orgs/Mininglamp-OSS/projects) and implementation begins.
 
-**What counts as “significant”?** Anything that changes a public API, adds a new user-facing concept, affects more than one repository, or has notable UX or architectural implications. Bug-adjacent improvements, small ergonomic wins, and documentation changes are “minor” and may be filed directly as Issues using the **Feature Request** template.
+**What counts as "significant"?** Anything that changes a public API, adds a new user-facing concept, affects more than one repository, or has notable UX or architectural implications. Minor improvements, bug fixes, small ergonomic wins, and documentation updates may be filed directly as Issues using the **Feature Request** template.
 
 Not sure which path to take? Open a Discussion — the Project Lead will guide you.
 
