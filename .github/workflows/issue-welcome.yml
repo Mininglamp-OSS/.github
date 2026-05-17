@@ -6,6 +6,10 @@ on:
 jobs:
   welcome:
     runs-on: ubuntu-latest
+    timeout-minutes: 3
+    concurrency:
+      group: welcome-${{ github.event.issue.number }}
+      cancel-in-progress: false
     permissions:
       issues: write
     steps:
@@ -15,10 +19,25 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const issue = context.payload.issue;
-
+            if (!issue) {
+              core.setFailed('This workflow must be called from an issues event. context.payload.issue is undefined.');
+              return;
+            }
             // Skip bot-opened issues (Dependabot, etc.)
             if (issue.user.type === 'Bot') {
               console.log('Skipping bot-opened issue');
+              return;
+            }
+
+            const marker = '<!-- octo-issue-welcome:v1 -->';
+            const existingComments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              per_page: 100
+            });
+            if (existingComments.some(c => c.body && c.body.includes(marker))) {
+              console.log('Welcome comment already posted, skipping (idempotent).');
               return;
             }
 
@@ -113,5 +132,5 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: issue.number,
-              body
+              body: marker + '\n' + body
             });
