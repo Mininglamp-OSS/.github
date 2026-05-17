@@ -102,7 +102,7 @@ Found a vulnerability? Please report it responsibly through our [Security Policy
 
 ## Star History
 
-<!-- Star History: flagship product repos only; octo-lib and octo-admin intentionally excluded (libraries/admin tooling) -->
+<!-- Star History: flagship product repos only; non-product repos (.github, community, openclaw-channel-octo) and internal tooling (octo-lib, octo-admin) intentionally excluded -->
 [![Star History Chart](https://api.star-history.com/svg?repos=Mininglamp-OSS/octo-web,Mininglamp-OSS/octo-server,Mininglamp-OSS/octo-adapters,Mininglamp-OSS/octo-deployment,Mininglamp-OSS/octo-matter,Mininglamp-OSS/octo-smart-summary&type=Date)](https://star-history.com/#Mininglamp-OSS/octo-web,Mininglamp-OSS/octo-server,Mininglamp-OSS/octo-adapters,Mininglamp-OSS/octo-deployment,Mininglamp-OSS/octo-matter,Mininglamp-OSS/octo-smart-summary&Date)
 
 ## License

@@ -102,7 +102,7 @@ OCTO 社区 Discord 是获取帮助、讨论功能、与其他用户和贡献者
 
 ## Star 趋势
 
-<!-- Star History: flagship product repos only; octo-lib and octo-admin intentionally excluded (libraries/admin tooling) -->
+<!-- Star History: flagship product repos only; non-product repos (.github, community, openclaw-channel-octo) and internal tooling (octo-lib, octo-admin) intentionally excluded -->
 [![Star History Chart](https://api.star-history.com/svg?repos=Mininglamp-OSS/octo-web,Mininglamp-OSS/octo-server,Mininglamp-OSS/octo-adapters,Mininglamp-OSS/octo-deployment,Mininglamp-OSS/octo-matter,Mininglamp-OSS/octo-smart-summary&type=Date)](https://star-history.com/#Mininglamp-OSS/octo-web,Mininglamp-OSS/octo-server,Mininglamp-OSS/octo-adapters,Mininglamp-OSS/octo-deployment,Mininglamp-OSS/octo-matter,Mininglamp-OSS/octo-smart-summary&Date)
 
 ## 许可证
