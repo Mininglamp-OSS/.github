@@ -90,7 +90,7 @@ jobs:
           def require_repo_name(name):
               """Validate repo name to prevent path traversal in GitHub API URLs."""
               val = require_env(name)
-              if not re.fullmatch(r'[A-Za-z0-9._-]{1,100}', val):
+              if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,99}', val) or val in {'.', '..'}:
                   print(f'ERROR: {name} contains invalid characters: {val!r}')
                   sys.exit(2)
               return val
