@@ -128,11 +128,14 @@ jobs:
           
           failed = []
           
-          def send(group_id, message):
+          def send(group_id, message, mention_uids=None):
+              payload = {'type': 1, 'content': message}
+              if mention_uids:
+                  payload['mention'] = {'uids': mention_uids}
               body = json.dumps({
                   'channel_id': group_id,
                   'channel_type': 2,
-                  'payload': {'type': 1, 'content': message},
+                  'payload': payload,
               }).encode()
               last_err = None
               for attempt in range(1, 4):
@@ -174,10 +177,11 @@ jobs:
           if action == 'opened':
               # repo is already validated by require_repo_name; safe to interpolate into URL
               triage_msg = (
-                  '@[27pmzxx8nad78c9d01e_bot:Octo 助理-IssueTriage] [TRIAGE] '
+                  '@[27pmzxX8NAD78c9d01e_bot:Octo 助理-IssueTriage] [TRIAGE] '
                   f'https://github.com/Mininglamp-OSS/{repo}/issues/{num}'
               )
-              send('151a45970e1546afa9e947ac36a5c4e5', triage_msg)
+              send('151a45970e1546afa9e947ac36a5c4e5', triage_msg,
+                   mention_uids=['27pmzxX8NAD78c9d01e_bot'])
 
           if failed:
               sys.exit(1)
