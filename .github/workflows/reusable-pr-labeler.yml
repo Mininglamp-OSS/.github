@@ -1,0 +1,204 @@
+name: Reusable — PR Labeler
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        description: Pull request number
+        type: number
+        required: true
+      repo_owner:
+        description: Repository owner
+        type: string
+        required: true
+      repo_name:
+        description: Repository name
+        type: string
+        required: true
+
+permissions: {}
+
+jobs:
+  label:
+    name: Label PR size and detect dependency changes
+    permissions:
+      issues: write
+      pull-requests: write
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Apply size label and detect dependency changes
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const owner = '${{ inputs.repo_owner }}';
+            const repo = '${{ inputs.repo_name }}';
+            const prNumber = Number('${{ inputs.pr_number }}');
+
+            const LOCKFILES = new Set([
+              'go.sum', 'pnpm-lock.yaml', 'package-lock.json', 'yarn.lock',
+            ]);
+            const DEP_FILES = new Set([
+              'go.mod', 'go.sum', 'package.json', 'pnpm-lock.yaml', 'yarn.lock',
+            ]);
+
+            // Fetch all changed files in the PR
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner,
+              repo,
+              pull_number: prNumber,
+              per_page: 100,
+            });
+
+            // Calculate net lines excluding lockfiles
+            let netLines = 0;
+            const depChanged = [];
+            for (const f of files) {
+              const basename = f.filename.split('/').pop();
+              if (!LOCKFILES.has(basename)) {
+                netLines += (f.additions || 0) + (f.deletions || 0);
+              }
+              if (DEP_FILES.has(basename)) {
+                depChanged.push(f.filename);
+              }
+            }
+
+            // Determine size tier
+            let sizeLabel;
+            if (netLines < 10) sizeLabel = 'size/XS';
+            else if (netLines < 50) sizeLabel = 'size/S';
+            else if (netLines < 200) sizeLabel = 'size/M';
+            else if (netLines < 500) sizeLabel = 'size/L';
+            else sizeLabel = 'size/XL';
+
+            // Ensure all size labels exist in the repo
+            const sizeLabels = ['size/XS', 'size/S', 'size/M', 'size/L', 'size/XL'];
+            const labelColors = {
+              'size/XS': '3cbf00',
+              'size/S': '5d9801',
+              'size/M': 'e4c008',
+              'size/L': 'ee6d01',
+              'size/XL': 'e11d48',
+            };
+            for (const sl of sizeLabels) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name: sl });
+              } catch {
+                try {
+                  await github.rest.issues.createLabel({
+                    owner,
+                    repo,
+                    name: sl,
+                    color: labelColors[sl],
+                    description: `PR size: ${sl.split('/')[1]}`,
+                  });
+                } catch (e) {
+                  core.debug(`Could not create label ${sl}: ${e.message}`);
+                }
+              }
+            }
+
+            // Remove stale size/* labels, then apply the current one
+            const { data: currentLabels } = await github.rest.issues.listLabelsOnIssue({
+              owner,
+              repo,
+              issue_number: prNumber,
+            });
+            for (const l of currentLabels) {
+              if (l.name.startsWith('size/') && l.name !== sizeLabel) {
+                await github.rest.issues.removeLabel({
+                  owner,
+                  repo,
+                  issue_number: prNumber,
+                  name: l.name,
+                }).catch(() => {});
+              }
+            }
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number: prNumber,
+              labels: [sizeLabel],
+            });
+            core.info(`Applied label: ${sizeLabel} (${netLines} net lines, lockfiles excluded)`);
+
+            // Handle dependency file changes
+            // Remove stale label if dep files are no longer present (e.g. after a sync push)
+            if (depChanged.length === 0) {
+              const { data: labels } = await github.rest.issues.listLabelsOnIssue({
+                owner, repo, issue_number: prNumber,
+              });
+              if (labels.some(l => l.name === 'dependencies-changed')) {
+                await github.rest.issues.removeLabel({
+                  owner, repo, issue_number: prNumber, name: 'dependencies-changed',
+                }).catch(() => {});
+              }
+            }
+
+            if (depChanged.length > 0) {
+              // Ensure dependencies-changed label exists
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name: 'dependencies-changed' });
+              } catch {
+                try {
+                  await github.rest.issues.createLabel({
+                    owner,
+                    repo,
+                    name: 'dependencies-changed',
+                    color: 'f9d0c4',
+                    description: 'This PR modifies dependency files',
+                  });
+                } catch (e) {
+                  core.debug(`Could not create dependencies-changed label: ${e.message}`);
+                }
+              }
+
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number: prNumber,
+                labels: ['dependencies-changed'],
+              }).catch(() => {});
+
+              const marker = '<!-- octo-dep-change-bot -->';
+              const fileList = depChanged.map(f => `- \`${f}\``).join('\n');
+              const body = [
+                marker,
+                '### Dependency Changes Detected',
+                '',
+                'This PR modifies dependency files. Please review whether these changes are intentional.',
+                '',
+                '**Changed files:**',
+                fileList,
+                '',
+                '**Maintainer checklist:**',
+                '- [ ] Confirm dependency changes are intentional',
+                '- [ ] Review package delta if lockfile changed',
+              ].join('\n');
+
+              // Update existing comment or create a new one
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner,
+                repo,
+                issue_number: prNumber,
+                per_page: 100,
+              });
+              const existing = comments.find(c => c.body && c.body.includes(marker));
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner,
+                  repo,
+                  comment_id: existing.id,
+                  body,
+                });
+                core.info('Updated existing dependency-change comment');
+              } else {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: prNumber,
+                  body,
+                });
+                core.info('Created dependency-change comment');
+              }
+              core.info(`Dependency files changed: ${depChanged.join(', ')}`);
+            }
