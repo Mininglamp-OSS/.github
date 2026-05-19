@@ -1,0 +1,114 @@
+name: Reusable — Stale
+
+on:
+  workflow_call:
+    inputs:
+      days_before_issue_stale:
+        description: Days before an issue is marked stale
+        type: number
+        default: 14
+      days_before_issue_close:
+        description: Days before a stale issue is closed
+        type: number
+        default: 7
+      days_before_pr_stale:
+        description: Days before a PR is marked stale
+        type: number
+        default: 14
+      days_before_pr_close:
+        description: Days before a stale PR is closed
+        type: number
+        default: 7
+
+permissions: {}
+
+jobs:
+  stale-unassigned:
+    name: Stale — unassigned issues and PRs
+    permissions:
+      issues: write
+      pull-requests: write
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/stale@5bef64f19d7facfb25b37b414482c7164d639639 # v9
+        with:
+          days-before-issue-stale: ${{ inputs.days_before_issue_stale }}
+          days-before-issue-close: ${{ inputs.days_before_issue_close }}
+          days-before-pr-stale: ${{ inputs.days_before_pr_stale }}
+          days-before-pr-close: ${{ inputs.days_before_pr_close }}
+          stale-issue-label: stale
+          stale-pr-label: stale
+          exempt-issue-labels: maintainer,pinned,security,no-stale
+          exempt-pr-labels: maintainer,no-stale
+          exempt-all-assignees: true
+          operations-per-run: 500
+          ascending: true
+          remove-stale-when-updated: true
+          stale-issue-message: >
+            This issue has been automatically marked as stale due to inactivity.
+            Please add an update or it will be closed.
+          stale-pr-message: >
+            This pull request has been automatically marked as stale due to inactivity.
+            Please add an update or it will be closed.
+          close-issue-message: >
+            Closing due to inactivity.
+            If this is still an issue, please retry on the latest release and share updated details.
+            If you are sure it still happens, open a new issue with fresh reproduction steps.
+          close-issue-reason: not_planned
+          close-pr-message: >
+            Closing due to inactivity.
+            If you believe this PR should be revived, please open a new issue or contact a maintainer.
+
+  stale-assigned-issues:
+    name: Stale — assigned issues
+    permissions:
+      issues: write
+      pull-requests: write
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/stale@5bef64f19d7facfb25b37b414482c7164d639639 # v9
+        with:
+          days-before-issue-stale: 30
+          days-before-issue-close: 10
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
+          stale-issue-label: stale
+          exempt-issue-labels: maintainer,pinned,security,no-stale
+          include-only-assigned: true
+          operations-per-run: 500
+          ascending: true
+          remove-stale-when-updated: true
+          stale-issue-message: >
+            This assigned issue has been automatically marked as stale after 30 days of inactivity.
+            Please add an update or it will be closed.
+          close-issue-message: >
+            Closing due to inactivity.
+            If this is still an issue, please retry on the latest release and share updated details.
+          close-issue-reason: not_planned
+
+  stale-assigned-prs:
+    name: Stale — assigned PRs
+    permissions:
+      issues: write
+      pull-requests: write
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/stale@5bef64f19d7facfb25b37b414482c7164d639639 # v9
+        with:
+          days-before-issue-stale: -1
+          days-before-issue-close: -1
+          days-before-pr-stale: 27
+          days-before-pr-close: 7
+          stale-pr-label: stale
+          exempt-pr-labels: maintainer,no-stale
+          include-only-assigned: true
+          ignore-pr-updates: true
+          operations-per-run: 500
+          ascending: true
+          remove-stale-when-updated: true
+          stale-pr-message: >
+            This assigned pull request has been automatically marked as stale after 27 days.
+            Please add an update or it will be closed.
+          close-pr-message: >
+            Closing due to inactivity.
+            If you believe this PR should be revived, please open a new issue or contact a maintainer.
