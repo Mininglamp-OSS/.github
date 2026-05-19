@@ -1,0 +1,82 @@
+name: Reusable — Release Publish
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.4.0). Must be a tag that already exists.'
+        type: string
+        required: true
+      validate_run_id:
+        description: 'Successful CI run ID to include as release evidence. Workflow validates this run succeeded before publishing.'
+        type: string
+        required: false
+        default: ''
+      draft:
+        description: 'Keep as draft (true) or publish (false)'
+        type: boolean
+        required: false
+        default: false
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Publish GitHub Release (${{ inputs.tag }})
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate semver tag format
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$TAG" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
+            echo "::error::Tag '$TAG' is not valid semver (expected vMAJOR.MINOR.PATCH[-prerelease])"
+            exit 1
+          fi
+          echo "Tag format OK: $TAG"
+
+      - name: Validate CI run succeeded
+        if: inputs.validate_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.validate_run_id }}
+        run: |
+          set -euo pipefail
+          conclusion=$(gh api "repos/${{ github.repository }}/actions/runs/${RUN_ID}" --jq '.conclusion' 2>/dev/null)
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::CI run ${RUN_ID} did not succeed (conclusion=${conclusion}). Aborting release."
+            exit 1
+          fi
+          echo "CI run ${RUN_ID} succeeded ✓"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          DRAFT: ${{ inputs.draft }}
+        run: |
+          set -euo pipefail
+          # Check if release draft exists for this tag
+          release_id=$(gh api "repos/${{ github.repository }}/releases" \
+            --jq --arg tag "$TAG" '.[] | select(.tag_name == $tag) | .id' 2>/dev/null | head -1)
+
+          if [ -n "$release_id" ]; then
+            echo "Updating existing release ${release_id} for tag ${TAG}"
+            gh api "repos/${{ github.repository }}/releases/${release_id}" \
+              --method PATCH \
+              --field draft="${DRAFT}" \
+              --field tag_name="${TAG}" \
+              --jq '.html_url'
+          else
+            echo "Creating new release for tag ${TAG}"
+            gh api "repos/${{ github.repository }}/releases" \
+              --method POST \
+              --field tag_name="${TAG}" \
+              --field name="${TAG}" \
+              --field draft="${DRAFT}" \
+              --field generate_release_notes=true \
+              --jq '.html_url'
+          fi
