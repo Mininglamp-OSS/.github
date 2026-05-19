@@ -45,8 +45,9 @@ on:
         description: 'Octo IM API base URL. Only the production endpoint is allowlisted; any other value will cause the workflow to fail.'
       feed_group_id:
         type: string
-        required: true
-        description: 'Octo IM feed/broadcast channel group ID (pr-feed channel)'
+        required: false
+        default: '1c303c142e9840f2a9b46c10b0972e8d'
+        description: 'Octo IM feed/broadcast channel group ID (pr-feed channel). Defaults to the shared pr-feed group.'
     secrets:
       OCTO_BOT_TOKEN:
         required: true

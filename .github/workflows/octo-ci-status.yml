@@ -21,7 +21,7 @@ on:
       workflow_id:
         type: number
         required: true
-        description: 'Numeric workflow ID. Pass ${{ github.event.workflow_run.workflow_id }} from caller.'
+        description: 'Numeric workflow ID. Pass github.event.workflow_run.workflow_id from the calling workflow (workflow_run event context).'
       run_url:
         type: string
         required: true
