@@ -1,0 +1,83 @@
+name: Workflow Sanity
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workflow-sanity-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  no-tabs:
+    name: No tabs in workflow files
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Fail on tabs in workflow files
+        run: |
+          python3 - <<'PY'
+          from __future__ import annotations
+          import pathlib, sys
+
+          bad: list[str] = []
+          for root in [pathlib.Path(".github/workflows"), pathlib.Path(".github/actions")]:
+            if not root.exists():
+              continue
+            for path in sorted(root.rglob("*.yml")):
+              if b"\t" in path.read_bytes():
+                bad.append(str(path))
+            for path in sorted(root.rglob("*.yaml")):
+              if b"\t" in path.read_bytes():
+                bad.append(str(path))
+
+          if bad:
+            print("Tabs found in workflow file(s):")
+            for p in bad:
+              print(f"  - {p}")
+            sys.exit(1)
+
+          print(f"No tabs found in {len(list(pathlib.Path('.github').rglob('*.yml')))} workflow file(s). ✓")
+          PY
+
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          VERSION="v1.7.12"
+          TARBALL="actionlint_1.7.12_linux_amd64.tar.gz"
+          SHA256="8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/${VERSION}/${TARBALL}" \
+            -o "${RUNNER_TEMP}/${TARBALL}"
+          echo "${SHA256}  ${RUNNER_TEMP}/${TARBALL}" | sha256sum -c -
+          tar -xzf "${RUNNER_TEMP}/${TARBALL}" -C "${RUNNER_TEMP}" actionlint
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+          "${RUNNER_TEMP}/actionlint" --version
+
+      - name: Run actionlint
+        run: |
+          # No path args — actionlint scans all *.yml and *.yaml under .github/workflows/
+          actionlint -color
