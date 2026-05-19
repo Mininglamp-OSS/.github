@@ -37,13 +37,14 @@ on:
       OCTO_BOT_TOKEN:
         required: true
 
-permissions:
-  actions: read
+permissions: {}
 
 jobs:
   notify:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      actions: read
     steps:
       - name: Notify Octo IM
         env:
