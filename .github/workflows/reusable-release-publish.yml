@@ -42,19 +42,39 @@ jobs:
           fi
           echo "Tag format OK: $TAG"
 
-      - name: Verify tag ref exists
+      - name: Verify tag ref exists and resolve commit SHA
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          tag_sha=$(gh api "repos/${{ github.repository }}/git/ref/tags/${TAG}" --jq '.object.sha' 2>/dev/null || true)
-          if [ -z "$tag_sha" ]; then
+          # Fetch the ref object (may be annotated tag object or direct commit)
+          ref_data=$(gh api "repos/${{ github.repository }}/git/ref/tags/${TAG}" 2>/dev/null || true)
+          if [ -z "$ref_data" ]; then
             echo "::error::Tag '${TAG}' does not exist in this repository. Push the tag before running this workflow."
             exit 1
           fi
-          echo "TAG_SHA=${tag_sha}" >> "$GITHUB_ENV"
-          echo "Tag ${TAG} exists at ${tag_sha}"
+
+          ref_type=$(printf '%s' "$ref_data" | jq -re '.object.type')
+          ref_sha=$(printf '%s' "$ref_data" | jq -re '.object.sha')
+
+          if [ "$ref_type" = "tag" ]; then
+            # Annotated tag: the ref points to a tag object, not the commit.
+            # Dereference the tag object to get the actual commit SHA.
+            tag_obj=$(gh api "repos/${{ github.repository }}/git/tags/${ref_sha}")
+            target_type=$(printf '%s' "$tag_obj" | jq -re '.object.type')
+            if [ "$target_type" != "commit" ]; then
+              echo "::error::Annotated tag '${TAG}' does not point to a commit (type=${target_type}). Only tags targeting commits are supported."
+              exit 1
+            fi
+            commit_sha=$(printf '%s' "$tag_obj" | jq -re '.object.sha')
+          else
+            # Lightweight tag: the ref already points directly to the commit.
+            commit_sha="$ref_sha"
+          fi
+
+          echo "TAG_SHA=${commit_sha}" >> "$GITHUB_ENV"
+          echo "Tag ${TAG} (${ref_type}) → commit ${commit_sha}"
 
       - name: Validate CI run succeeded and matches tag commit
         env:
