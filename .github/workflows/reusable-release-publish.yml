@@ -4,16 +4,15 @@ on:
   workflow_call:
     inputs:
       tag:
-        description: 'Release tag (e.g. v1.4.0). Must be a tag that already exists.'
+        description: 'Release tag (e.g. v1.4.0). Must be an existing tag ref.'
         type: string
         required: true
       validate_run_id:
-        description: 'Successful CI run ID to include as release evidence. Workflow validates this run succeeded before publishing.'
+        description: 'Required: successful CI run ID as release evidence. The workflow validates this run succeeded and was triggered from the same commit as the tag before publishing.'
         type: string
-        required: false
-        default: ''
+        required: true
       draft:
-        description: 'Keep as draft (true) or publish (false)'
+        description: 'Keep as draft (true) or publish immediately (false)'
         type: boolean
         required: false
         default: false
@@ -25,6 +24,7 @@ jobs:
     name: Publish GitHub Release (${{ inputs.tag }})
     permissions:
       contents: write
+      actions: read  # required to query workflow run status and head SHA
     runs-on: ubuntu-24.04
     steps:
       - name: Validate semver tag format
@@ -32,25 +32,51 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          if ! printf '%s' "$TAG" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
-            echo "::error::Tag '$TAG' is not valid semver (expected vMAJOR.MINOR.PATCH[-prerelease])"
+          # Strict semver: vMAJOR.MINOR.PATCH with optional pre-release segments.
+          # Rejects leading zeros (v01.2.3), empty dot segments (v1.2.3-..),
+          # and non-semver aliases (v1, v1.2).
+          if ! printf '%s' "$TAG" | grep -Eq \
+            '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'; then
+            echo "::error::Tag '$TAG' is not strict semver (vMAJOR.MINOR.PATCH[-prerelease][+build])"
             exit 1
           fi
           echo "Tag format OK: $TAG"
 
-      - name: Validate CI run succeeded
-        if: inputs.validate_run_id != ''
+      - name: Verify tag ref exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag_sha=$(gh api "repos/${{ github.repository }}/git/ref/tags/${TAG}" --jq '.object.sha' 2>/dev/null || true)
+          if [ -z "$tag_sha" ]; then
+            echo "::error::Tag '${TAG}' does not exist in this repository. Push the tag before running this workflow."
+            exit 1
+          fi
+          echo "TAG_SHA=${tag_sha}" >> "$GITHUB_ENV"
+          echo "Tag ${TAG} exists at ${tag_sha}"
+
+      - name: Validate CI run succeeded and matches tag commit
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.validate_run_id }}
         run: |
           set -euo pipefail
-          conclusion=$(gh api "repos/${{ github.repository }}/actions/runs/${RUN_ID}" --jq '.conclusion' 2>/dev/null)
+          run_data=$(gh api "repos/${{ github.repository }}/actions/runs/${RUN_ID}" 2>/dev/null)
+          conclusion=$(printf '%s' "$run_data" | jq -r '.conclusion')
+          run_sha=$(printf '%s' "$run_data" | jq -r '.head_sha')
+
           if [ "$conclusion" != "success" ]; then
-            echo "::error::CI run ${RUN_ID} did not succeed (conclusion=${conclusion}). Aborting release."
+            echo "::error::CI run ${RUN_ID} conclusion='${conclusion}' (need success). Aborting."
             exit 1
           fi
-          echo "CI run ${RUN_ID} succeeded ✓"
+
+          if [ "$run_sha" != "$TAG_SHA" ]; then
+            echo "::error::CI run ${RUN_ID} head_sha=${run_sha} does not match tag ${TAG} sha=${TAG_SHA}. The run must be from the tagged commit."
+            exit 1
+          fi
+
+          echo "CI run ${RUN_ID} succeeded on commit ${run_sha} ✓"
 
       - name: Publish GitHub Release
         env:
@@ -59,24 +85,29 @@ jobs:
           DRAFT: ${{ inputs.draft }}
         run: |
           set -euo pipefail
-          # Check if release draft exists for this tag
-          release_id=$(gh api "repos/${{ github.repository }}/releases" \
-            --jq --arg tag "$TAG" '.[] | select(.tag_name == $tag) | .id' 2>/dev/null | head -1)
+
+          # Look up existing release for this tag (--paginate handles repos with many releases)
+          # jq -rs: slurp multiple page arrays into one outer array, then flatten with [][]
+          release_id=$(gh api "repos/${{ github.repository }}/releases" --paginate \
+            | jq -rs --arg tag "$TAG" '[.[][] | select(.tag_name == $tag) | .id][0] // empty')
 
           if [ -n "$release_id" ]; then
             echo "Updating existing release ${release_id} for tag ${TAG}"
-            gh api "repos/${{ github.repository }}/releases/${release_id}" \
+            url=$(gh api "repos/${{ github.repository }}/releases/${release_id}" \
               --method PATCH \
               --field draft="${DRAFT}" \
               --field tag_name="${TAG}" \
-              --jq '.html_url'
+              | jq -r '.html_url')
           else
             echo "Creating new release for tag ${TAG}"
-            gh api "repos/${{ github.repository }}/releases" \
+            url=$(gh api "repos/${{ github.repository }}/releases" \
               --method POST \
               --field tag_name="${TAG}" \
               --field name="${TAG}" \
               --field draft="${DRAFT}" \
               --field generate_release_notes=true \
-              --jq '.html_url'
+              | jq -r '.html_url')
           fi
+
+          echo "Release URL: ${url}"
+          echo "release_url=${url}" >> "$GITHUB_OUTPUT"
