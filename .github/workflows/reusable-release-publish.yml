@@ -1,0 +1,147 @@
+name: Reusable — Release Publish
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.4.0). Must be an existing tag ref.'
+        type: string
+        required: true
+      validate_run_id:
+        description: 'Required: successful CI run ID as release evidence. The workflow validates this run succeeded and was triggered from the same commit as the tag before publishing.'
+        type: string
+        required: true
+      ci_workflow_name:
+        description: 'Expected workflow name for the CI run (default: CI). Set to the exact name shown in your repo Actions tab if it differs.'
+        type: string
+        required: false
+        default: 'CI'
+      draft:
+        description: 'Keep as draft (true) or publish immediately (false)'
+        type: boolean
+        required: false
+        default: false
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Publish GitHub Release (${{ inputs.tag }})
+    permissions:
+      contents: write
+      actions: read  # required to query workflow run status and head SHA
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate semver tag format
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          # Strict semver: vMAJOR.MINOR.PATCH with optional pre-release segments.
+          # Rejects leading zeros (v01.2.3), empty dot segments (v1.2.3-..),
+          # and non-semver aliases (v1, v1.2).
+          if ! printf '%s' "$TAG" | grep -Eq \
+            '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?([+][0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'; then
+            echo "::error::Tag '$TAG' is not strict semver (vMAJOR.MINOR.PATCH[-prerelease][+build])"
+            exit 1
+          fi
+          echo "Tag format OK: $TAG"
+
+      - name: Verify tag ref exists and resolve commit SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          # Fetch the ref object (may be annotated tag object or direct commit)
+          ref_data=$(gh api "repos/${{ github.repository }}/git/ref/tags/${TAG}" 2>/dev/null || true)
+          if [ -z "$ref_data" ]; then
+            echo "::error::Tag '${TAG}' does not exist in this repository. Push the tag before running this workflow."
+            exit 1
+          fi
+
+          ref_type=$(printf '%s' "$ref_data" | jq -re '.object.type')
+          ref_sha=$(printf '%s' "$ref_data" | jq -re '.object.sha')
+
+          if [ "$ref_type" = "tag" ]; then
+            # Annotated tag: the ref points to a tag object, not the commit.
+            # Dereference the tag object to get the actual commit SHA.
+            tag_obj=$(gh api "repos/${{ github.repository }}/git/tags/${ref_sha}")
+            target_type=$(printf '%s' "$tag_obj" | jq -re '.object.type')
+            if [ "$target_type" != "commit" ]; then
+              echo "::error::Annotated tag '${TAG}' does not point to a commit (type=${target_type}). Only tags targeting commits are supported."
+              exit 1
+            fi
+            commit_sha=$(printf '%s' "$tag_obj" | jq -re '.object.sha')
+          else
+            # Lightweight tag: the ref already points directly to the commit.
+            commit_sha="$ref_sha"
+          fi
+
+          echo "TAG_SHA=${commit_sha}" >> "$GITHUB_ENV"
+          echo "Tag ${TAG} (${ref_type}) → commit ${commit_sha}"
+
+      - name: Validate CI run succeeded and matches tag commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.validate_run_id }}
+          EXPECTED_WORKFLOW: ${{ inputs.ci_workflow_name }}
+        run: |
+          set -euo pipefail
+          run_data=$(gh api "repos/${{ github.repository }}/actions/runs/${RUN_ID}")
+          conclusion=$(printf '%s' "$run_data" | jq -re '.conclusion')
+          run_sha=$(printf '%s' "$run_data" | jq -re '.head_sha')
+          workflow_name=$(printf '%s' "$run_data" | jq -re '.name')
+
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::CI run ${RUN_ID} conclusion='${conclusion}' (need success). Aborting."
+            exit 1
+          fi
+
+          if [ "$run_sha" != "$TAG_SHA" ]; then
+            echo "::error::CI run ${RUN_ID} head_sha=${run_sha} does not match tag ${TAG} sha=${TAG_SHA}."
+            exit 1
+          fi
+
+          # Validate the run is from the expected CI workflow.
+          # EXPECTED_WORKFLOW is passed via env (not inline expression) to avoid shell injection.
+          if [ "$workflow_name" != "$EXPECTED_WORKFLOW" ]; then
+            echo "::error::CI run ${RUN_ID} is from workflow '${workflow_name}', expected '${EXPECTED_WORKFLOW}'. Use ci_workflow_name input to configure."
+            exit 1
+          fi
+
+          echo "CI run ${RUN_ID} (workflow='${workflow_name}') succeeded on commit ${run_sha} ✓"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          DRAFT: ${{ inputs.draft }}
+        run: |
+          set -euo pipefail
+
+          # Look up existing release for this tag (--paginate handles repos with many releases)
+          # jq -rs: slurp multiple page arrays into one outer array, then flatten with [][]
+          release_id=$(gh api "repos/${{ github.repository }}/releases" --paginate \
+            | jq -rs --arg tag "$TAG" '[.[][] | select(.tag_name == $tag) | .id][0] // empty')
+
+          if [ -n "$release_id" ]; then
+            echo "Updating existing release ${release_id} for tag ${TAG}"
+            url=$(gh api "repos/${{ github.repository }}/releases/${release_id}" \
+              --method PATCH \
+              --field draft="${DRAFT}" \
+              --field tag_name="${TAG}" \
+              | jq -r '.html_url')
+          else
+            echo "Creating new release for tag ${TAG}"
+            url=$(gh api "repos/${{ github.repository }}/releases" \
+              --method POST \
+              --field tag_name="${TAG}" \
+              --field name="${TAG}" \
+              --field draft="${DRAFT}" \
+              --field generate_release_notes=true \
+              | jq -r '.html_url')
+          fi
+
+          echo "Release URL: ${url}"
+          echo "release_url=${url}" >> "$GITHUB_OUTPUT"

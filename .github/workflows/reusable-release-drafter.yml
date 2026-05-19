@@ -1,0 +1,26 @@
+name: Reusable — Release Drafter
+
+on:
+  workflow_call:
+    inputs:
+      config-name:
+        description: 'release-drafter config filename under .github/'
+        type: string
+        required: false
+        default: 'release-drafter.yml'
+
+permissions: {}
+
+jobs:
+  draft:
+    name: Update Release Draft
+    permissions:
+      contents: write
+      pull-requests: read
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: release-drafter/release-drafter@67e173cadb2fbd3de94f4a861e0c48c913b462ae # v6
+        with:
+          config-name: ${{ inputs.config-name }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
