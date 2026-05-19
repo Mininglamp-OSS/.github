@@ -28,7 +28,21 @@ on:
         type: string
         required: false
         default: 'https://im.deepminer.com.cn/api'
-        description: 'Octo IM API base URL. Only the production endpoint is allowlisted.'
+        description: 'Octo IM API base URL. Only the production endpoint is allowlisted. Any other value will cause the workflow to fail.'
+      # ── Deprecated inputs kept for backward compatibility ──────────────────
+      # Callers still passing these (using the old @v1 reusable) will not break;
+      # the values are accepted and silently ignored. Remove from callers first,
+      # then remove from this reusable in a follow-up PR.
+      issue_labels:
+        type: string
+        required: false
+        default: '[]'
+        description: 'DEPRECATED — no longer used. Remove from callers before dropping here.'
+      project_group_id:
+        type: string
+        required: false
+        default: ''
+        description: 'DEPRECATED — no longer used. Remove from callers before dropping here.'
     secrets:
       OCTO_BOT_TOKEN:
         required: true
