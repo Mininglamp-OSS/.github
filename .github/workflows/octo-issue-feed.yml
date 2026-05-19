@@ -1,5 +1,6 @@
-# Reusable workflow: notify Octo IM when an issue event occurs.
+# Reusable workflow: notify Octo IM when an issue is opened or reopened.
 # Called from per-repo caller workflows.
+# Only new/reopen events are forwarded; close, label, and other events are ignored.
 name: Octo Issue Feed (reusable)
 
 on:
@@ -20,20 +21,28 @@ on:
       issue_author:
         type: string
         required: true
-      issue_labels:
-        type: string
-        default: '[]'
       event_action:
-        type: string
-        required: true
-      project_group_id:
         type: string
         required: true
       api_base_url:
         type: string
         required: false
         default: 'https://im.deepminer.com.cn/api'
-        description: 'Octo IM API base URL. Only the production endpoint is allowlisted; any other value will cause the workflow to fail.'
+        description: 'Octo IM API base URL. Only the production endpoint is allowlisted. Any other value will cause the workflow to fail.'
+      # ── Deprecated inputs kept for backward compatibility ──────────────────
+      # Callers still passing these (using the old @v1 reusable) will not break;
+      # the values are accepted and silently ignored. Remove from callers first,
+      # then remove from this reusable in a follow-up PR.
+      issue_labels:
+        type: string
+        required: false
+        default: '[]'
+        description: 'DEPRECATED — no longer used. Remove from callers before dropping here.'
+      project_group_id:
+        type: string
+        required: false
+        default: ''
+        description: 'DEPRECATED — no longer used. Remove from callers before dropping here.'
     secrets:
       OCTO_BOT_TOKEN:
         required: true
@@ -45,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Notify Octo IM
+      - name: Notify Octo IM — issue-feed
         env:
           OCTO_BOT_TOKEN: ${{ secrets.OCTO_BOT_TOKEN }}
           REPO_NAME: ${{ inputs.repo_name }}
@@ -53,68 +62,54 @@ jobs:
           ISSUE_TITLE: ${{ inputs.issue_title }}
           ISSUE_URL: ${{ inputs.issue_url }}
           ISSUE_AUTHOR: ${{ inputs.issue_author }}
-          ISSUE_LABELS: ${{ inputs.issue_labels }}
           EVENT_ACTION: ${{ inputs.event_action }}
-          PROJECT_GROUP_ID: ${{ inputs.project_group_id }}
           API_BASE_URL: ${{ inputs.api_base_url }}
         run: |
           python3 - << 'PYEOF'
           import os, json, re, sys, time, urllib.request, urllib.error
-          
-          
+
+
           def require_env(name):
               val = os.environ.get(name, '').strip()
               if not val:
                   print(f'ERROR: required environment variable {name} is missing or empty')
                   sys.exit(2)
               return val
-          
-          
+
+
           def sanitize_text(s, max_len=300):
-              """Strip control characters (CR, LF, tabs, etc.) to prevent IM message injection."""
+              """Strip control characters to prevent IM message injection."""
               s = str(s or '')
-              # Strip all C0 control characters (U+0000-U+001F) and DEL (U+007F)
               s = re.sub(r'[\x00-\x1f\x7f]', ' ', s)
               return s[:max_len]
-          
-          
-          def require_group_id(name):
-              """Validate format only (32-char hex); this is not an authorization check."""
-              val = require_env(name)
-              if not re.fullmatch(r'[0-9a-f]{32}', val):
-                  print(f'ERROR: {name} must be a 32-char lowercase hex group id')
-                  sys.exit(2)
-              return val
 
 
           def require_repo_name(name):
-              """Validate repo name to prevent path traversal in GitHub API URLs."""
+              """Validate repo name to prevent path traversal."""
               val = require_env(name)
               if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,99}', val) or val in {'.', '..'}:
                   print(f'ERROR: {name} contains invalid characters: {val!r}')
                   sys.exit(2)
               return val
-          
-          
+
+
           action = require_env('EVENT_ACTION')
-          emoji = {'opened': '🆕', 'closed': '✅', 'reopened': '🔄', 'labeled': '🏷️'}.get(action, 'ℹ️')
-          
-          try:
-              labels = [sanitize_text(l, max_len=64) for l in json.loads(os.environ.get('ISSUE_LABELS', '[]'))]
-              labels_part = ' · 🏷️ ' + ', '.join(labels) if labels else ''
-          except Exception:
-              labels_part = ''
-          
-          repo  = require_repo_name('REPO_NAME')
-          num   = require_env('ISSUE_NUMBER')
-          title = sanitize_text(require_env('ISSUE_TITLE'), max_len=300)
-          url   = require_env('ISSUE_URL')
+
+          # Only process new and reopened issues; ignore all other events.
+          if action not in ('opened', 'reopened'):
+              print(f'Skipping event_action={action!r} — only opened/reopened are forwarded.')
+              sys.exit(0)
+
+          emoji = {'opened': '🆕', 'reopened': '🔄'}.get(action, 'ℹ️')
+
+          repo   = require_repo_name('REPO_NAME')
+          num    = require_env('ISSUE_NUMBER')
+          title  = sanitize_text(require_env('ISSUE_TITLE'), max_len=300)
+          url    = require_env('ISSUE_URL')
           author = sanitize_text(require_env('ISSUE_AUTHOR'), max_len=80)
-          proj_gid = require_group_id('PROJECT_GROUP_ID')
-          
-          feed_msg = f"{emoji} [{repo}] Issue #{num} · {title}\n👤 {author}{labels_part}\n🔗 {url}"
-          proj_msg = f"{emoji} Issue #{num} · {title}\n👤 {author}{labels_part}\n🔗 {url}"
-          
+
+          feed_msg = f"{emoji} [{repo}] Issue #{num} · {title}\n👤 {author}\n🔗 {url}"
+
           ALLOWED_API_BASES = {
               'https://im.deepminer.com.cn/api',
           }
@@ -125,13 +120,11 @@ jobs:
           api = _api_base + '/v1/bot/sendMessage'
           token = require_env('OCTO_BOT_TOKEN')
           headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
-          
+
           failed = []
-          
-          def send(group_id, message, mention_uids=None):
+
+          def send(group_id, message):
               payload = {'type': 1, 'content': message}
-              if mention_uids:
-                  payload['mention'] = {'uids': mention_uids}
               body = json.dumps({
                   'channel_id': group_id,
                   'channel_type': 2,
@@ -143,7 +136,7 @@ jobs:
                   try:
                       with urllib.request.urlopen(req, timeout=15) as r:
                           print(f'  → {group_id[:8]}... HTTP {r.status}')
-                          return  # success
+                          return
                   except urllib.error.HTTPError as e:
                       last_err = e
                       if e.code in (429, 500, 502, 503, 504) and attempt < 3:
@@ -167,21 +160,12 @@ jobs:
                           time.sleep(wait)
                       else:
                           break
-              print(f'ERROR: failed to send message to {group_id[:8]}...: {last_err}')
+              print(f'ERROR: failed to send to {group_id[:8]}...: {last_err}')
               failed.append(group_id)
-          
-          send('151a45970e1546afa9e947ac36a5c4e5', feed_msg)
-          send(proj_gid, proj_msg)
 
-          # Trigger IssueTriage bot on newly opened issues
-          if action == 'opened':
-              # repo is already validated by require_repo_name; safe to interpolate into URL
-              triage_msg = (
-                  '@[27pmzxX8NAD78c9d01e_bot:Octo 助理-IssueTriage] [TRIAGE] '
-                  f'https://github.com/Mininglamp-OSS/{repo}/issues/{num}'
-              )
-              send('151a45970e1546afa9e947ac36a5c4e5', triage_msg,
-                   mention_uids=['27pmzxX8NAD78c9d01e_bot'])
+          # Send to issue-feed group only
+          ISSUE_FEED_GROUP = '151a45970e1546afa9e947ac36a5c4e5'
+          send(ISSUE_FEED_GROUP, feed_msg)
 
           if failed:
               sys.exit(1)
