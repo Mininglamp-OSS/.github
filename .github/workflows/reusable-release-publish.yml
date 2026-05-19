@@ -11,6 +11,11 @@ on:
         description: 'Required: successful CI run ID as release evidence. The workflow validates this run succeeded and was triggered from the same commit as the tag before publishing.'
         type: string
         required: true
+      ci_workflow_name:
+        description: 'Expected workflow name for the CI run (default: CI). Set to the exact name shown in your repo Actions tab if it differs.'
+        type: string
+        required: false
+        default: 'CI'
       draft:
         description: 'Keep as draft (true) or publish immediately (false)'
         type: boolean
@@ -80,6 +85,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.validate_run_id }}
+          EXPECTED_WORKFLOW: ${{ inputs.ci_workflow_name }}
         run: |
           set -euo pipefail
           run_data=$(gh api "repos/${{ github.repository }}/actions/runs/${RUN_ID}")
@@ -97,10 +103,10 @@ jobs:
             exit 1
           fi
 
-          # Validate the run is the primary CI workflow (not a stale or auxiliary run).
-          # 'CI' is the expected workflow name — adjust if your repo uses a different name.
-          if [ "$workflow_name" != "CI" ]; then
-            echo "::error::CI run ${RUN_ID} is from workflow '${workflow_name}', expected 'CI'. Provide a run from the main CI workflow."
+          # Validate the run is from the expected CI workflow.
+          # EXPECTED_WORKFLOW is passed via env (not inline expression) to avoid shell injection.
+          if [ "$workflow_name" != "$EXPECTED_WORKFLOW" ]; then
+            echo "::error::CI run ${RUN_ID} is from workflow '${workflow_name}', expected '${EXPECTED_WORKFLOW}'. Use ci_workflow_name input to configure."
             exit 1
           fi
 
