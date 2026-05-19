@@ -24,7 +24,8 @@ jobs:
               return;
             }
             // Skip bot-opened issues (Dependabot, etc.)
-            if (issue.user.type === 'Bot') {
+            // Guard against ghost/deleted user accounts where issue.user may be null
+            if (issue.user && issue.user.type === 'Bot') {
               console.log('Skipping bot-opened issue');
               return;
             }
