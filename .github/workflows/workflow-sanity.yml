@@ -1,6 +1,9 @@
 name: Workflow Sanity
 
 on:
+  # Allow external repos to call this as a reusable workflow
+  workflow_call:
+
   pull_request:
     paths:
       - '.github/workflows/**'
