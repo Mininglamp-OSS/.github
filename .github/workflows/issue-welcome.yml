@@ -3,6 +3,8 @@ name: Issue Welcome (Reusable)
 on:
   workflow_call:
 
+permissions: {}
+
 jobs:
   welcome:
     runs-on: ubuntu-latest

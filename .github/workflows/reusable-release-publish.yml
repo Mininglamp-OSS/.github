@@ -27,6 +27,7 @@ permissions: {}
 jobs:
   publish:
     name: Publish GitHub Release (${{ inputs.tag }})
+    timeout-minutes: 15
     permissions:
       contents: write
       actions: read  # required to query workflow run status and head SHA

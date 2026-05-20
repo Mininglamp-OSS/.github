@@ -21,6 +21,7 @@ permissions: {}
 jobs:
   label:
     name: Label PR size and detect dependency changes
+    timeout-minutes: 10
     permissions:
       issues: write
       pull-requests: write
