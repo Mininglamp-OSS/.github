@@ -1,2 +1,11 @@
-# Default owners for the .github repository
-* @lml2468
+# CODEOWNERS — Mininglamp-OSS/.github (org trust root)
+#
+# This repository contains reusable workflows that run across all org repos.
+# Changes here affect the entire organization's CI/CD pipeline.
+# Require review from maintainers team for all changes.
+
+# Default: all changes require maintainers review
+* @Mininglamp-OSS/maintainers
+
+# Workflow files: extra protection (same team, but explicitly called out)
+/.github/workflows/ @Mininglamp-OSS/maintainers
