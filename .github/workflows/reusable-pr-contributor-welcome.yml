@@ -14,8 +14,6 @@
 #   jobs:
 #     welcome:
 #       uses: Mininglamp-OSS/.github/.github/workflows/reusable-pr-contributor-welcome.yml@main
-#       secrets:
-#         ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
 #
 # SECURITY: this workflow does NOT check out any code. It only reads PR
 # metadata via the GitHub API, which is safe even when the caller uses
@@ -26,10 +24,6 @@ name: PR Contributor Welcome (Reusable)
 
 on:
   workflow_call:
-    secrets:
-      ORG_READ_TOKEN:
-        description: 'GitHub token with org:read scope to check org membership. Falls back to GITHUB_TOKEN if not provided.'
-        required: false
 
 permissions: {}
 
@@ -45,8 +39,6 @@ jobs:
     steps:
       - name: Welcome first-time external contributor
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7.1.0
-        env:
-          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -67,12 +59,12 @@ jobs:
             const org = 'Mininglamp-OSS';
 
             // Check if the author is an org member — skip silently if so
-            const orgToken = process.env.ORG_READ_TOKEN || '';
-            const octokit = orgToken
-              ? github.constructor({ auth: orgToken })
-              : github;
+            // Use GITHUB_TOKEN to check org membership (works for public orgs).
+            // If the org has private membership and a 403 is returned, we proceed
+            // with the welcome rather than blocking silently — this is the safe
+            // default (at worst, an org member gets a welcome comment once).
             try {
-              const res = await octokit.request('GET /orgs/{org}/members/{username}', {
+              const res = await github.request('GET /orgs/{org}/members/{username}', {
                 org,
                 username,
               });
