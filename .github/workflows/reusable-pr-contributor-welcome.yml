@@ -1,0 +1,130 @@
+# Welcome first-time external contributors when they open a PR.
+#
+# This is a reusable workflow: child repositories within the Mininglamp-OSS
+# organization can call it via `workflow_call` to share a single, centrally
+# maintained automation.
+#
+# Caller repos should use `pull_request_target` (not `pull_request`) so that
+# PRs opened from forks can access the write token needed to post comments.
+#
+# Example caller:
+#   on:
+#     pull_request_target:
+#       types: [opened]
+#   jobs:
+#     welcome:
+#       uses: Mininglamp-OSS/.github/.github/workflows/reusable-pr-contributor-welcome.yml@main
+#       secrets:
+#         ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+#
+# SECURITY: this workflow does NOT check out any code. It only reads PR
+# metadata via the GitHub API, which is safe even when the caller uses
+# pull_request_target. Do NOT add `actions/checkout` here — running
+# untrusted PR code in the base repo's privileged context would let a
+# malicious fork exfiltrate secrets.
+name: PR Contributor Welcome (Reusable)
+
+on:
+  workflow_call:
+    secrets:
+      ORG_READ_TOKEN:
+        description: 'GitHub token with org:read scope to check org membership. Falls back to GITHUB_TOKEN if not provided.'
+        required: false
+
+permissions: {}
+
+jobs:
+  welcome:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    concurrency:
+      group: pr-welcome-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Welcome first-time external contributor
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7.1.0
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              core.setFailed('This workflow must be called from a pull_request event. context.payload.pull_request is undefined.');
+              return;
+            }
+
+            // Skip bot-opened PRs (Dependabot, etc.)
+            // Guard against ghost/deleted user accounts where pr.user may be null
+            if (pr.user && pr.user.type === 'Bot') {
+              console.log('Skipping bot-opened PR');
+              return;
+            }
+
+            const username = pr.user.login;
+            const org = 'Mininglamp-OSS';
+
+            // Check if the author is an org member — skip silently if so
+            const orgToken = process.env.ORG_READ_TOKEN || '';
+            const octokit = orgToken
+              ? github.constructor({ auth: orgToken })
+              : github;
+            try {
+              const res = await octokit.request('GET /orgs/{org}/members/{username}', {
+                org,
+                username,
+              });
+              if (res.status === 204) {
+                console.log(`@${username} is an org member, skipping welcome`);
+                return;
+              }
+            } catch (err) {
+              if (err.status === 404) {
+                console.log(`@${username} is not an org member, proceeding`);
+              } else {
+                // If we can't determine membership (403 / network error), proceed
+                // with the welcome rather than failing silently
+                console.log(`Org membership check failed (${err.status}), proceeding with welcome`);
+              }
+            }
+
+            // Check if this is their first PR in the calling repository
+            const searchQuery = `type:pr author:${username} repo:${context.repo.owner}/${context.repo.repo}`;
+            const { data: searchResult } = await github.rest.search.issuesAndPullRequests({
+              q: searchQuery,
+              per_page: 2,
+            });
+            if (searchResult.total_count > 1) {
+              console.log(`@${username} has ${searchResult.total_count} PRs in this repo, not a first-timer`);
+              return;
+            }
+
+            // Idempotency: check if we already posted a welcome comment
+            const marker = '<!-- octo-pr-welcome:v1 -->';
+            const existingComments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              per_page: 100,
+            });
+            if (existingComments.some(c => c.body && c.body.includes(marker))) {
+              console.log('Welcome comment already posted, skipping (idempotent).');
+              return;
+            }
+
+            const body = [
+              `Hey @${username}, thanks for your first contribution to Octo! 🎉`,
+              '',
+              'Welcome to the community, and looking forward to more! 🐙',
+              '',
+              '— Octo Team',
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body: marker + '\n' + body,
+            });
