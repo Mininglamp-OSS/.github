@@ -33,7 +33,7 @@
 #
 #   on:
 #     pull_request_target:
-#       types: [opened, synchronize, reopened, labeled, unlabeled]
+#       types: [opened, synchronize, reopened]
 #
 #   jobs:
 #     check-sprint:
@@ -49,7 +49,9 @@
 #
 # Status check name for branch protection: "check-sprint / check-sprint"
 #
-# PROJECT_TOKEN required scopes: read:project, read:org
+# PROJECT_TOKEN required scopes:
+#   For public repositories:  read:project + read:org is sufficient.
+#   For private repositories: also add read:repo.
 
 name: Check Sprint (reusable)
 
@@ -81,7 +83,9 @@ on:
         default: false
     secrets:
       PROJECT_TOKEN:
-        description: "PAT with read:project and read:org scopes"
+        description: >-
+          PAT with read:project and read:org scopes.
+          For private repositories, also add read:repo.
         required: true
 
 jobs:
@@ -102,7 +106,7 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PYTHON_SCRIPT'
-          import json, os, sys, time
+          import json, os, sys, time, urllib.request, urllib.error
           from datetime import date, datetime, timedelta
           from zoneinfo import ZoneInfo
 
@@ -116,67 +120,86 @@ jobs:
 
           BOARD_URL = f"https://github.com/orgs/{ORG_LOGIN}/projects/{PROJECT_NUMBER}"
 
-          MAX_RETRIES = 3
+          MAX_ATTEMPTS = 3
 
 
           def graphql(query: str, variables: dict = None) -> dict:
-              """Call GitHub GraphQL API via curl and return parsed JSON.
+              """Call GitHub GraphQL API via urllib and return parsed JSON.
 
-              Retries up to MAX_RETRIES times on transient failures (non-zero exit
-              code or HTTP 5xx). Does NOT retry on 4xx or GraphQL-level errors.
+              Makes up to 3 attempts (2 retries) on transient failures (HTTP 5xx
+              or network errors). Does NOT retry on 4xx or GraphQL-level errors.
               """
-              import subprocess
-
               payload = {"query": query}
               if variables:
                   payload["variables"] = variables
+              body_bytes = json.dumps(payload).encode("utf-8")
 
-              for attempt in range(MAX_RETRIES):
-                  result = subprocess.run(
-                      [
-                          "curl", "-s", "-w", "\n%{http_code}",
-                          "-H", f"Authorization: bearer {TOKEN}",
-                          "-H", "Content-Type: application/json",
-                          "-X", "POST",
+              for attempt in range(MAX_ATTEMPTS):
+                  try:
+                      req = urllib.request.Request(
                           "https://api.github.com/graphql",
-                          "-d", json.dumps(payload),
-                      ],
-                      capture_output=True,
-                      text=True,
-                  )
+                          data=body_bytes,
+                          headers={
+                              "Authorization": f"bearer {TOKEN}",
+                              "Content-Type": "application/json",
+                          },
+                          method="POST",
+                      )
+                      resp = urllib.request.urlopen(req, timeout=30)
+                      resp_body = resp.read().decode("utf-8")
+                      http_code = resp.status
 
-                  if result.returncode != 0:
-                      if attempt < MAX_RETRIES - 1:
+                  except urllib.error.HTTPError as e:
+                      http_code = e.code
+                      try:
+                          resp_body = e.read().decode("utf-8")
+                      except Exception:
+                          resp_body = ""
+
+                      if http_code >= 500:
+                          if attempt < MAX_ATTEMPTS - 1:
+                              delay = 1 * (2 ** attempt)
+                              print(f"::warning::GraphQL returned HTTP {http_code}, "
+                                    f"retrying in {delay}s...")
+                              time.sleep(delay)
+                              continue
+                          print(f"::error::GraphQL returned HTTP {http_code} after "
+                                f"{MAX_ATTEMPTS} attempts.")
+                          sys.exit(1)
+
+                      if http_code == 401:
+                          print("::error::PROJECT_TOKEN is invalid or expired")
+                          sys.exit(1)
+                      elif http_code == 403:
+                          print("::error::PROJECT_TOKEN lacks required scopes "
+                                "(read:project + read:org)")
+                          sys.exit(1)
+                      elif http_code == 404:
+                          print("::error::Project or repository not found. "
+                                "Check org-login and project-number inputs")
+                          sys.exit(1)
+                      else:
+                          print(f"::error::GraphQL request failed with HTTP {http_code}")
+                          sys.exit(1)
+
+                  except (urllib.error.URLError, OSError) as e:
+                      if attempt < MAX_ATTEMPTS - 1:
                           delay = 1 * (2 ** attempt)
-                          print(f"::warning::GraphQL request failed (exit {result.returncode}), "
+                          print(f"::warning::GraphQL request failed ({e}), "
                                 f"retrying in {delay}s...")
                           time.sleep(delay)
                           continue
-                      print(f"::error::GraphQL request failed after {MAX_RETRIES} attempts "
-                            f"(exit {result.returncode}): {result.stderr.strip()}")
-                      sys.exit(1)
-
-                  lines = result.stdout.rsplit("\n", 1)
-                  body_str = lines[0]
-                  http_code = int(lines[1]) if len(lines) > 1 else 200
-
-                  if http_code >= 500:
-                      if attempt < MAX_RETRIES - 1:
-                          delay = 1 * (2 ** attempt)
-                          print(f"::warning::GraphQL returned HTTP {http_code}, "
-                                f"retrying in {delay}s...")
-                          time.sleep(delay)
-                          continue
-                      print(f"::error::GraphQL returned HTTP {http_code} after "
-                            f"{MAX_RETRIES} attempts.")
+                      print(f"::error::GraphQL request failed after {MAX_ATTEMPTS} "
+                            f"attempts: {e}")
                       sys.exit(1)
 
                   try:
-                      body = json.loads(body_str)
+                      body = json.loads(resp_body)
                   except json.JSONDecodeError:
-                      print(f"::error::GitHub API returned a non-JSON response (HTTP {http_code}). "
-                            f"Response: {body_str[:200]}")
+                      print(f"::error::GitHub API returned a non-JSON response "
+                            f"(HTTP {http_code}). Response: {resp_body[:200]}")
                       sys.exit(1)
+
                   if "errors" in body:
                       msgs = "; ".join(e.get("message", str(e)) for e in body["errors"])
                       print(f"::error::GraphQL errors: {msgs}")
@@ -184,7 +207,6 @@ jobs:
 
                   return body["data"]
 
-              # Should not be reached, but just in case
               print("::error::GraphQL request failed: exceeded retry limit.")
               sys.exit(1)
 
@@ -221,6 +243,12 @@ jobs:
                   variables={"orgLogin": ORG_LOGIN, "projectNumber": PROJECT_NUMBER},
               )
               field = data["organization"]["projectV2"]["field"]
+
+              if field is None:
+                  print(f"::error::Sprint field not found on project #{PROJECT_NUMBER}. "
+                        "Has the 'Sprint' field been renamed or removed from the Octo Board?")
+                  sys.exit(1)
+
               iterations = field["configuration"]["iterations"]
           except (KeyError, TypeError) as e:
               print(f"::error::Failed to read Sprint iterations. "
@@ -259,7 +287,7 @@ jobs:
               query($owner: String!, $name: String!, $number: Int!) {
                 repository(owner: $owner, name: $name) {
                   pullRequest(number: $number) {
-                    projectItems(first: 20) {
+                    projectItems(first: 100) {
                       nodes {
                         project { number }
                         sprint: fieldValueByName(name: "Sprint") {
@@ -286,7 +314,7 @@ jobs:
                   query($owner: String!, $name: String!, $number: Int!) {
                     repository(owner: $owner, name: $name) {
                       pullRequest(number: $number) {
-                        projectItems(first: 20) {
+                        projectItems(first: 100) {
                           nodes {
                             project { number }
                             sprint: fieldValueByName(name: "Sprint") {
