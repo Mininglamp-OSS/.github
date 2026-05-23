@@ -37,7 +37,7 @@
 #
 #   jobs:
 #     check-sprint:
-#       uses: ./.github/workflows/reusable-check-sprint.yml
+#       uses: Mininglamp-OSS/.github/.github/workflows/reusable-check-sprint.yml@main
 #       with:
 #         pr-number: ${{ github.event.pull_request.number }}
 #         repo-name: ${{ github.repository }}
@@ -171,7 +171,13 @@ jobs:
                             f"{MAX_RETRIES} attempts.")
                       sys.exit(1)
 
-                  body = json.loads(body_str)
+                  try:
+                      body = json.loads(body_str)
+                  except json.JSONDecodeError:
+                      print(f"::error::GitHub API returned a non-JSON response (HTTP {http_code}). "
+                            f"Response: {body_str[:200]}")
+                      sys.exit(1)
+
                   if "errors" in body:
                       msgs = "; ".join(e.get("message", str(e)) for e in body["errors"])
                       print(f"::error::GraphQL errors: {msgs}")
@@ -197,6 +203,7 @@ jobs:
                   query($orgLogin: String!, $projectNumber: Int!) {
                     organization(login: $orgLogin) {
                       projectV2(number: $projectNumber) {
+                        id
                         field(name: "Sprint") {
                           ... on ProjectV2IterationField {
                             configuration {
@@ -215,6 +222,7 @@ jobs:
                   """,
                   variables={"orgLogin": ORG_LOGIN, "projectNumber": PROJECT_NUMBER},
               )
+              project_id = data["organization"]["projectV2"]["id"]
               field = data["organization"]["projectV2"]["field"]
               iterations = field["configuration"]["iterations"]
           except (KeyError, TypeError) as e:
@@ -249,64 +257,92 @@ jobs:
 
           # --- Step 2: Get the PR's Sprint value from the project board -------------
 
-          try:
-              pr_query = """
-              query($owner: String!, $name: String!, $number: Int!) {
-                repository(owner: $owner, name: $name) {
-                  pullRequest(number: $number) {
-                    projectItems(first: 20) {
-                      nodes {
-                        project { number }
-                        sprint: fieldValueByName(name: "Sprint") {
-                          ... on ProjectV2ItemFieldIterationValue {
-                            iterationId
-                            title
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-              """
-              pr_variables = {
-                  "owner": REPO_OWNER,
-                  "name": REPO_SHORT,
-                  "number": PR_NUMBER,
-              }
+          MAX_PROJECT_PAGES = 5
 
-              if ENFORCE_FRESHNESS:
-                  # Fetch head commit timestamp alongside PR data
-                  pr_query = """
-                  query($owner: String!, $name: String!, $number: Int!) {
-                    repository(owner: $owner, name: $name) {
-                      pullRequest(number: $number) {
-                        projectItems(first: 20) {
-                          nodes {
-                            project { number }
-                            sprint: fieldValueByName(name: "Sprint") {
-                              ... on ProjectV2ItemFieldIterationValue {
-                                iterationId
-                                title
+          try:
+              board_item = None
+              after_cursor = None
+              head_commit_data = None
+
+              for page in range(MAX_PROJECT_PAGES):
+                  if ENFORCE_FRESHNESS and page == 0:
+                      pr_query = """
+                      query($owner: String!, $name: String!, $number: Int!, $after: String) {
+                        repository(owner: $owner, name: $name) {
+                          pullRequest(number: $number) {
+                            projectItems(first: 20, after: $after) {
+                              nodes {
+                                project { id number }
+                                sprint: fieldValueByName(name: "Sprint") {
+                                  ... on ProjectV2ItemFieldIterationValue {
+                                    iterationId
+                                    title
+                                  }
+                                }
+                              }
+                              pageInfo { hasNextPage endCursor }
+                            }
+                            commits(last: 1) {
+                              nodes {
+                                commit {
+                                  committedDate
+                                }
                               }
                             }
                           }
                         }
-                        commits(last: 1) {
-                          nodes {
-                            commit {
-                              committedDate
+                      }
+                      """
+                  else:
+                      pr_query = """
+                      query($owner: String!, $name: String!, $number: Int!, $after: String) {
+                        repository(owner: $owner, name: $name) {
+                          pullRequest(number: $number) {
+                            projectItems(first: 20, after: $after) {
+                              nodes {
+                                project { id number }
+                                sprint: fieldValueByName(name: "Sprint") {
+                                  ... on ProjectV2ItemFieldIterationValue {
+                                    iterationId
+                                    title
+                                  }
+                                }
+                              }
+                              pageInfo { hasNextPage endCursor }
                             }
                           }
                         }
                       }
-                    }
-                  }
-                  """
+                      """
 
-              data = graphql(pr_query, variables=pr_variables)
-              pr = data["repository"]["pullRequest"]
-              items = pr["projectItems"]["nodes"]
+                  pr_variables = {
+                      "owner": REPO_OWNER,
+                      "name": REPO_SHORT,
+                      "number": PR_NUMBER,
+                      "after": after_cursor,
+                  }
+
+                  data = graphql(pr_query, variables=pr_variables)
+                  pr = data["repository"]["pullRequest"]
+                  items = pr["projectItems"]["nodes"]
+                  page_info = pr["projectItems"]["pageInfo"]
+
+                  if ENFORCE_FRESHNESS and page == 0 and "commits" in pr:
+                      head_commit_data = pr["commits"]
+
+                  for item in items:
+                      if item["project"]["id"] == project_id:
+                          board_item = item
+                          break
+
+                  if board_item is not None:
+                      break
+
+                  if not page_info["hasNextPage"]:
+                      break
+
+                  after_cursor = page_info["endCursor"]
+
           except (KeyError, TypeError) as e:
               print(f"::error::Failed to read PR project data. "
                     "Check that PROJECT_TOKEN has read:project + read:org scope "
@@ -317,7 +353,7 @@ jobs:
 
           if ENFORCE_FRESHNESS:
               try:
-                  committed_date_str = pr["commits"]["nodes"][0]["commit"]["committedDate"]
+                  committed_date_str = head_commit_data["nodes"][0]["commit"]["committedDate"]
                   committed_date = datetime.fromisoformat(
                       committed_date_str.replace("Z", "+00:00")
                   ).astimezone(ZoneInfo("Asia/Shanghai")).date()
@@ -336,13 +372,6 @@ jobs:
                   print(f"::error::Failed to check head commit timestamp for "
                         f"freshness enforcement. Detail: {e}")
                   sys.exit(1)
-
-          # Find the item belonging to the configured project
-          board_item = None
-          for item in items:
-              if item["project"]["number"] == PROJECT_NUMBER:
-                  board_item = item
-                  break
 
           # --- Step 3: Evaluate result ----------------------------------------------
 
