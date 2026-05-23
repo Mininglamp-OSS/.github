@@ -1,0 +1,195 @@
+# Reusable workflow: Check Sprint on Merge
+#
+# Security model:
+#   - Callers use pull_request_target so the workflow has access to secrets
+#     even for PRs from forks. This is safe here because we never check out
+#     or execute PR code — the only action is a read-only GraphQL query
+#     against the GitHub Projects API.
+#   - permissions is set to empty ({}) so the GITHUB_TOKEN carries zero scopes.
+#     All API calls use the dedicated PROJECT_TOKEN PAT, which only needs
+#     read:project (and read:org for org-level project access).
+
+name: Check Sprint (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      pr-number:
+        description: "Pull request number to check"
+        required: true
+        type: number
+      repo-name:
+        description: "Full repo name (owner/repo)"
+        required: true
+        type: string
+    secrets:
+      PROJECT_TOKEN:
+        description: "PAT with read:project and read:org scopes"
+        required: true
+
+jobs:
+  check-sprint:
+    name: check-sprint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Validate Sprint field on Project Board
+        env:
+          PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+          REPO_NAME: ${{ inputs.repo-name }}
+        shell: bash
+        run: |
+          python3 - <<'PYTHON_SCRIPT'
+          import json, os, subprocess, sys
+          from datetime import date, timedelta
+
+          TOKEN = os.environ["PROJECT_TOKEN"]
+          PR_NUMBER = int(os.environ["PR_NUMBER"])
+          REPO_NAME = os.environ["REPO_NAME"]   # e.g. "Mininglamp-OSS/octo-server"
+          REPO_OWNER, REPO_SHORT = REPO_NAME.split("/", 1)
+
+          BOARD_URL = "https://github.com/orgs/Mininglamp-OSS/projects/2"
+          PROJECT_NUMBER = 2
+
+
+          def graphql(query: str) -> dict:
+              """Call GitHub GraphQL API via curl and return parsed JSON."""
+              result = subprocess.run(
+                  [
+                      "curl", "-sf",
+                      "-H", f"Authorization: bearer {TOKEN}",
+                      "-H", "Content-Type: application/json",
+                      "-X", "POST",
+                      "https://api.github.com/graphql",
+                      "-d", json.dumps({"query": query}),
+                  ],
+                  capture_output=True,
+                  text=True,
+              )
+              if result.returncode != 0:
+                  print(f"::error::GraphQL request failed (exit {result.returncode}): {result.stderr.strip()}")
+                  sys.exit(1)
+
+              body = json.loads(result.stdout)
+              if "errors" in body:
+                  msgs = "; ".join(e.get("message", str(e)) for e in body["errors"])
+                  print(f"::error::GraphQL errors: {msgs}")
+                  sys.exit(1)
+
+              return body["data"]
+
+
+          def get_today_shanghai() -> date:
+              """Return today's date in Asia/Shanghai (date-only, no time component)."""
+              result = subprocess.run(
+                  ["date", "+%Y-%m-%d"],
+                  capture_output=True, text=True,
+                  env={**os.environ, "TZ": "Asia/Shanghai"},
+              )
+              return date.fromisoformat(result.stdout.strip())
+
+
+          # --- Step 1: Determine the current sprint iteration -----------------------
+
+          data = graphql("""
+          {
+            organization(login: "Mininglamp-OSS") {
+              projectV2(number: 2) {
+                field(name: "Sprint") {
+                  ... on ProjectV2IterationField {
+                    configuration {
+                      iterations {
+                        id
+                        title
+                        startDate
+                        duration
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          """)
+
+          field = data["organization"]["projectV2"]["field"]
+          iterations = field["configuration"]["iterations"]
+
+          today = get_today_shanghai()
+          current_sprint = None
+
+          for it in iterations:
+              start = date.fromisoformat(it["startDate"])
+              end = start + timedelta(days=it["duration"])
+              if start <= today < end:
+                  current_sprint = it
+                  break
+
+          if current_sprint is None:
+              print("::error::Could not determine the current sprint iteration. "
+                    "Check that the Sprint field on the Octo Board has an iteration covering today.")
+              sys.exit(1)
+
+          print(f"Current sprint: {current_sprint['title']} "
+                f"({current_sprint['startDate']} + {current_sprint['duration']}d)")
+
+          # --- Step 2: Get the PR's Sprint value from the project board -------------
+
+          data = graphql(f"""
+          {{
+            repository(owner: "{REPO_OWNER}", name: "{REPO_SHORT}") {{
+              pullRequest(number: {PR_NUMBER}) {{
+                projectItems(first: 10) {{
+                  nodes {{
+                    project {{ number }}
+                    sprint: fieldValueByName(name: "Sprint") {{
+                      ... on ProjectV2ItemFieldIterationValue {{
+                        iterationId
+                        title
+                      }}
+                    }}
+                  }}
+                }}
+              }}
+            }}
+          }}
+          """)
+
+          pr = data["repository"]["pullRequest"]
+          items = pr["projectItems"]["nodes"]
+
+          # Find the item belonging to project #2
+          board_item = None
+          for item in items:
+              if item["project"]["number"] == PROJECT_NUMBER:
+                  board_item = item
+                  break
+
+          # --- Step 3: Evaluate result ----------------------------------------------
+
+          if board_item is None or board_item.get("sprint") is None:
+              # Type A: Sprint not set or PR not on the board
+              print(
+                  f"::error::❌ Sprint not set. "
+                  f"Please set Sprint = {current_sprint['title']} on the Octo Board "
+                  f"({BOARD_URL}), then go to Actions UI and re-run this check."
+              )
+              sys.exit(1)
+
+          pr_sprint_title = board_item["sprint"]["title"]
+          pr_sprint_id = board_item["sprint"]["iterationId"]
+
+          if pr_sprint_id != current_sprint["id"]:
+              # Type B: Sprint set but does not match current sprint
+              print(
+                  f"::error::❌ Sprint mismatch. "
+                  f"Current sprint is {current_sprint['title']}, "
+                  f"but this PR's Sprint is {pr_sprint_title}. "
+                  f"Please update Sprint on the Board, then re-run this check in Actions UI."
+              )
+              sys.exit(1)
+
+          print(f"✅ Sprint is correctly set to: {pr_sprint_title}")
+          PYTHON_SCRIPT
