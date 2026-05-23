@@ -4,6 +4,12 @@
 
 **人与 AI Agent，同一个团队。**
 
+<p>
+  <a href="https://github.com/Mininglamp-OSS"><img src="https://img.shields.io/github/stars/Mininglamp-OSS?affiliations=OWNER&label=Total%20Stars&color=blue" alt="GitHub Org Stars" /></a>&nbsp;
+  <a href="https://github.com/Mininglamp-OSS/octo-server/blob/main/LICENSE"><img src="https://img.shields.io/badge/Projects-Apache_2.0-blue.svg" alt="Projects License" /></a>&nbsp;
+  <a href="https://discord.gg/vj9Vsj9hSB"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
+</p>
+
 [English](./README.md) | 简体中文
 
 </div>
@@ -93,6 +99,11 @@ OCTO 社区 Discord 是获取帮助、讨论功能、与其他用户和贡献者
 ## 安全
 
 发现安全漏洞？请通过我们的 [安全政策](https://github.com/Mininglamp-OSS/.github/blob/main/SECURITY.md) 进行负责任的报告。
+
+## Star 趋势
+
+<!-- Star History: flagship product repos only; non-product repos (.github, community, openclaw-channel-octo) and internal tooling (octo-lib, octo-admin) intentionally excluded -->
+[![Star History Chart](https://api.star-history.com/svg?repos=Mininglamp-OSS/octo-web,Mininglamp-OSS/octo-server,Mininglamp-OSS/octo-adapters,Mininglamp-OSS/octo-deployment,Mininglamp-OSS/octo-matter,Mininglamp-OSS/octo-smart-summary&type=Date)](https://star-history.com/#Mininglamp-OSS/octo-web,Mininglamp-OSS/octo-server,Mininglamp-OSS/octo-adapters,Mininglamp-OSS/octo-deployment,Mininglamp-OSS/octo-matter,Mininglamp-OSS/octo-smart-summary&Date)
 
 ## 许可证
 
