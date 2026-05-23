@@ -1,13 +1,55 @@
 # Reusable workflow: Check Sprint on Merge
 #
+# +------------------------------------------------------------------------+
+# | KNOWN LIMITATION: STALE CHECK ON SPRINT ROLLOVER                       |
+# |                                                                        |
+# | This check runs at push time. Branch protection caches the result per  |
+# | commit SHA. A PR can pass "Sprint=W21" on Friday, the sprint rolls to  |
+# | W22 on Monday, and the PR can still merge using the stale green check  |
+# | without re-running.                                                    |
+# |                                                                        |
+# | RECOMMENDED MITIGATION:                                                |
+# |   Enable "Require branches to be up to date before merging" in branch  |
+# |   protection settings. This forces a fresh push whenever main moves,   |
+# |   which re-triggers all checks including this one.                     |
+# |                                                                        |
+# | RESIDUAL RISK:                                                         |
+# |   If the branch is already up-to-date with main and the sprint rolls   |
+# |   over between the last push and the merge, the stale check will       |
+# |   still allow the merge. Use `enforce-freshness: true` to add a        |
+# |   commit-timestamp guard for this edge case.                           |
+# +------------------------------------------------------------------------+
+#
 # Security model:
 #   - Callers use pull_request_target so the workflow has access to secrets
 #     even for PRs from forks. This is safe here because we never check out
-#     or execute PR code — the only action is a read-only GraphQL query
+#     or execute PR code -- the only action is a read-only GraphQL query
 #     against the GitHub Projects API.
 #   - permissions is set to empty ({}) so the GITHUB_TOKEN carries zero scopes.
 #     All API calls use the dedicated PROJECT_TOKEN PAT, which only needs
 #     read:project (and read:org for org-level project access).
+#
+# Usage example (caller workflow):
+#
+#   on:
+#     pull_request_target:
+#       types: [opened, synchronize, reopened, labeled, unlabeled]
+#
+#   jobs:
+#     check-sprint:
+#       uses: ./.github/workflows/reusable-check-sprint.yml
+#       with:
+#         pr-number: ${{ github.event.pull_request.number }}
+#         repo-name: ${{ github.repository }}
+#         # org-login: "Mininglamp-OSS"      # default
+#         # project-number: 2                 # default
+#         # enforce-freshness: false          # default
+#       secrets:
+#         PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+#
+# Status check name for branch protection: "check-sprint / check-sprint"
+#
+# PROJECT_TOKEN required scopes: read:project, read:org
 
 name: Check Sprint (reusable)
 
@@ -22,6 +64,21 @@ on:
         description: "Full repo name (owner/repo)"
         required: true
         type: string
+      org-login:
+        description: "GitHub org login"
+        required: false
+        type: string
+        default: "Mininglamp-OSS"
+      project-number:
+        description: "GitHub Project V2 number"
+        required: false
+        type: number
+        default: 2
+      enforce-freshness:
+        description: "When true, fail if the PR head commit predates the current sprint start date"
+        required: false
+        type: boolean
+        default: false
     secrets:
       PROJECT_TOKEN:
         description: "PAT with read:project and read:org scopes"
@@ -39,83 +96,133 @@ jobs:
           PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           PR_NUMBER: ${{ inputs.pr-number }}
           REPO_NAME: ${{ inputs.repo-name }}
+          ORG_LOGIN: ${{ inputs.org-login }}
+          PROJECT_NUMBER: ${{ inputs.project-number }}
+          ENFORCE_FRESHNESS: ${{ inputs.enforce-freshness }}
         shell: bash
         run: |
           python3 - <<'PYTHON_SCRIPT'
-          import json, os, subprocess, sys
-          from datetime import date, timedelta
+          import json, os, sys, time
+          from datetime import date, datetime, timedelta
+          from zoneinfo import ZoneInfo
 
           TOKEN = os.environ["PROJECT_TOKEN"]
           PR_NUMBER = int(os.environ["PR_NUMBER"])
           REPO_NAME = os.environ["REPO_NAME"]   # e.g. "Mininglamp-OSS/octo-server"
           REPO_OWNER, REPO_SHORT = REPO_NAME.split("/", 1)
+          ORG_LOGIN = os.environ["ORG_LOGIN"]
+          PROJECT_NUMBER = int(os.environ["PROJECT_NUMBER"])
+          ENFORCE_FRESHNESS = os.environ.get("ENFORCE_FRESHNESS", "false").lower() == "true"
 
-          BOARD_URL = "https://github.com/orgs/Mininglamp-OSS/projects/2"
-          PROJECT_NUMBER = 2
+          BOARD_URL = f"https://github.com/orgs/{ORG_LOGIN}/projects/{PROJECT_NUMBER}"
+
+          MAX_RETRIES = 3
 
 
-          def graphql(query: str) -> dict:
-              """Call GitHub GraphQL API via curl and return parsed JSON."""
-              result = subprocess.run(
-                  [
-                      "curl", "-sf",
-                      "-H", f"Authorization: bearer {TOKEN}",
-                      "-H", "Content-Type: application/json",
-                      "-X", "POST",
-                      "https://api.github.com/graphql",
-                      "-d", json.dumps({"query": query}),
-                  ],
-                  capture_output=True,
-                  text=True,
-              )
-              if result.returncode != 0:
-                  print(f"::error::GraphQL request failed (exit {result.returncode}): {result.stderr.strip()}")
-                  sys.exit(1)
+          def graphql(query: str, variables: dict = None) -> dict:
+              """Call GitHub GraphQL API via curl and return parsed JSON.
 
-              body = json.loads(result.stdout)
-              if "errors" in body:
-                  msgs = "; ".join(e.get("message", str(e)) for e in body["errors"])
-                  print(f"::error::GraphQL errors: {msgs}")
-                  sys.exit(1)
+              Retries up to MAX_RETRIES times on transient failures (non-zero exit
+              code or HTTP 5xx). Does NOT retry on 4xx or GraphQL-level errors.
+              """
+              import subprocess
 
-              return body["data"]
+              payload = {"query": query}
+              if variables:
+                  payload["variables"] = variables
+
+              for attempt in range(MAX_RETRIES):
+                  result = subprocess.run(
+                      [
+                          "curl", "-s", "-w", "\n%{http_code}",
+                          "-H", f"Authorization: bearer {TOKEN}",
+                          "-H", "Content-Type: application/json",
+                          "-X", "POST",
+                          "https://api.github.com/graphql",
+                          "-d", json.dumps(payload),
+                      ],
+                      capture_output=True,
+                      text=True,
+                  )
+
+                  if result.returncode != 0:
+                      if attempt < MAX_RETRIES - 1:
+                          delay = 1 * (2 ** attempt)
+                          print(f"::warning::GraphQL request failed (exit {result.returncode}), "
+                                f"retrying in {delay}s...")
+                          time.sleep(delay)
+                          continue
+                      print(f"::error::GraphQL request failed after {MAX_RETRIES} attempts "
+                            f"(exit {result.returncode}): {result.stderr.strip()}")
+                      sys.exit(1)
+
+                  lines = result.stdout.rsplit("\n", 1)
+                  body_str = lines[0]
+                  http_code = int(lines[1]) if len(lines) > 1 else 200
+
+                  if http_code >= 500:
+                      if attempt < MAX_RETRIES - 1:
+                          delay = 1 * (2 ** attempt)
+                          print(f"::warning::GraphQL returned HTTP {http_code}, "
+                                f"retrying in {delay}s...")
+                          time.sleep(delay)
+                          continue
+                      print(f"::error::GraphQL returned HTTP {http_code} after "
+                            f"{MAX_RETRIES} attempts.")
+                      sys.exit(1)
+
+                  body = json.loads(body_str)
+                  if "errors" in body:
+                      msgs = "; ".join(e.get("message", str(e)) for e in body["errors"])
+                      print(f"::error::GraphQL errors: {msgs}")
+                      sys.exit(1)
+
+                  return body["data"]
+
+              # Should not be reached, but just in case
+              print("::error::GraphQL request failed: exceeded retry limit.")
+              sys.exit(1)
 
 
           def get_today_shanghai() -> date:
               """Return today's date in Asia/Shanghai (date-only, no time component)."""
-              result = subprocess.run(
-                  ["date", "+%Y-%m-%d"],
-                  capture_output=True, text=True,
-                  env={**os.environ, "TZ": "Asia/Shanghai"},
-              )
-              return date.fromisoformat(result.stdout.strip())
+              return datetime.now(ZoneInfo("Asia/Shanghai")).date()
 
 
           # --- Step 1: Determine the current sprint iteration -----------------------
 
-          data = graphql("""
-          {
-            organization(login: "Mininglamp-OSS") {
-              projectV2(number: 2) {
-                field(name: "Sprint") {
-                  ... on ProjectV2IterationField {
-                    configuration {
-                      iterations {
-                        id
-                        title
-                        startDate
-                        duration
+          try:
+              data = graphql(
+                  """
+                  query($orgLogin: String!, $projectNumber: Int!) {
+                    organization(login: $orgLogin) {
+                      projectV2(number: $projectNumber) {
+                        field(name: "Sprint") {
+                          ... on ProjectV2IterationField {
+                            configuration {
+                              iterations {
+                                id
+                                title
+                                startDate
+                                duration
+                              }
+                            }
+                          }
+                        }
                       }
                     }
                   }
-                }
-              }
-            }
-          }
-          """)
-
-          field = data["organization"]["projectV2"]["field"]
-          iterations = field["configuration"]["iterations"]
+                  """,
+                  variables={"orgLogin": ORG_LOGIN, "projectNumber": PROJECT_NUMBER},
+              )
+              field = data["organization"]["projectV2"]["field"]
+              iterations = field["configuration"]["iterations"]
+          except (KeyError, TypeError) as e:
+              print(f"::error::Failed to read Sprint iterations. "
+                    "Check that PROJECT_TOKEN has read:project + read:org scope "
+                    "and that the Sprint field exists on project board "
+                    f"#{PROJECT_NUMBER}. Detail: {e}")
+              sys.exit(1)
 
           today = get_today_shanghai()
           current_sprint = None
@@ -128,39 +235,109 @@ jobs:
                   break
 
           if current_sprint is None:
-              print("::error::Could not determine the current sprint iteration. "
-                    "Check that the Sprint field on the Octo Board has an iteration covering today.")
+              print(
+                  f"::error::No active sprint covers today ({today}). "
+                  "Ask the project admin to add a new iteration on the Octo Board: "
+                  f"{BOARD_URL}/settings"
+              )
               sys.exit(1)
+
+          sprint_start = date.fromisoformat(current_sprint["startDate"])
 
           print(f"Current sprint: {current_sprint['title']} "
                 f"({current_sprint['startDate']} + {current_sprint['duration']}d)")
 
           # --- Step 2: Get the PR's Sprint value from the project board -------------
 
-          data = graphql(f"""
-          {{
-            repository(owner: "{REPO_OWNER}", name: "{REPO_SHORT}") {{
-              pullRequest(number: {PR_NUMBER}) {{
-                projectItems(first: 10) {{
-                  nodes {{
-                    project {{ number }}
-                    sprint: fieldValueByName(name: "Sprint") {{
-                      ... on ProjectV2ItemFieldIterationValue {{
-                        iterationId
-                        title
-                      }}
-                    }}
-                  }}
-                }}
-              }}
-            }}
-          }}
-          """)
+          try:
+              pr_query = """
+              query($owner: String!, $name: String!, $number: Int!) {
+                repository(owner: $owner, name: $name) {
+                  pullRequest(number: $number) {
+                    projectItems(first: 20) {
+                      nodes {
+                        project { number }
+                        sprint: fieldValueByName(name: "Sprint") {
+                          ... on ProjectV2ItemFieldIterationValue {
+                            iterationId
+                            title
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              """
+              pr_variables = {
+                  "owner": REPO_OWNER,
+                  "name": REPO_SHORT,
+                  "number": PR_NUMBER,
+              }
 
-          pr = data["repository"]["pullRequest"]
-          items = pr["projectItems"]["nodes"]
+              if ENFORCE_FRESHNESS:
+                  # Fetch head commit timestamp alongside PR data
+                  pr_query = """
+                  query($owner: String!, $name: String!, $number: Int!) {
+                    repository(owner: $owner, name: $name) {
+                      pullRequest(number: $number) {
+                        projectItems(first: 20) {
+                          nodes {
+                            project { number }
+                            sprint: fieldValueByName(name: "Sprint") {
+                              ... on ProjectV2ItemFieldIterationValue {
+                                iterationId
+                                title
+                              }
+                            }
+                          }
+                        }
+                        commits(last: 1) {
+                          nodes {
+                            commit {
+                              committedDate
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                  """
 
-          # Find the item belonging to project #2
+              data = graphql(pr_query, variables=pr_variables)
+              pr = data["repository"]["pullRequest"]
+              items = pr["projectItems"]["nodes"]
+          except (KeyError, TypeError) as e:
+              print(f"::error::Failed to read PR project data. "
+                    "Check that PROJECT_TOKEN has read:project + read:org scope "
+                    f"and that PR #{PR_NUMBER} exists. Detail: {e}")
+              sys.exit(1)
+
+          # --- Step 2b (optional): Enforce freshness check --------------------------
+
+          if ENFORCE_FRESHNESS:
+              try:
+                  committed_date_str = pr["commits"]["nodes"][0]["commit"]["committedDate"]
+                  committed_date = datetime.fromisoformat(
+                      committed_date_str.replace("Z", "+00:00")
+                  ).astimezone(ZoneInfo("Asia/Shanghai")).date()
+
+                  if committed_date < sprint_start:
+                      print(
+                          "::error::PR head commit predates the current sprint. "
+                          "Please rebase or push a new commit to re-evaluate "
+                          "sprint membership."
+                      )
+                      sys.exit(1)
+
+                  print(f"Freshness check passed: head commit date {committed_date} "
+                        f">= sprint start {sprint_start}")
+              except (KeyError, TypeError, IndexError) as e:
+                  print(f"::error::Failed to check head commit timestamp for "
+                        f"freshness enforcement. Detail: {e}")
+                  sys.exit(1)
+
+          # Find the item belonging to the configured project
           board_item = None
           for item in items:
               if item["project"]["number"] == PROJECT_NUMBER:
@@ -170,9 +347,8 @@ jobs:
           # --- Step 3: Evaluate result ----------------------------------------------
 
           if board_item is None or board_item.get("sprint") is None:
-              # Type A: Sprint not set or PR not on the board
               print(
-                  f"::error::❌ Sprint not set. "
+                  f"::error::Sprint not set. "
                   f"Please set Sprint = {current_sprint['title']} on the Octo Board "
                   f"({BOARD_URL}), then go to Actions UI and re-run this check."
               )
@@ -182,14 +358,13 @@ jobs:
           pr_sprint_id = board_item["sprint"]["iterationId"]
 
           if pr_sprint_id != current_sprint["id"]:
-              # Type B: Sprint set but does not match current sprint
               print(
-                  f"::error::❌ Sprint mismatch. "
+                  f"::error::Sprint mismatch. "
                   f"Current sprint is {current_sprint['title']}, "
                   f"but this PR's Sprint is {pr_sprint_title}. "
                   f"Please update Sprint on the Board, then re-run this check in Actions UI."
               )
               sys.exit(1)
 
-          print(f"✅ Sprint is correctly set to: {pr_sprint_title}")
+          print(f"Sprint is correctly set to: {pr_sprint_title}")
           PYTHON_SCRIPT
