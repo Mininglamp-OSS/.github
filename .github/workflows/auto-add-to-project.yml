@@ -1,4 +1,5 @@
-# Auto-add issues and PRs to the org-level GitHub Project board.
+# Auto-add issues and PRs to the org-level GitHub Project board, and set the
+# Module field on the newly-added Project item based on the source repository.
 #
 # This is a reusable workflow: child repositories within the Mininglamp-OSS
 # organization can call it via `workflow_call` to share a single, centrally
@@ -65,7 +66,62 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Add issue or PR to org project
+        id: add-project
         uses: actions/add-to-project@5afcf98fcd03f1c2f92c3c83f58ae24323cc57fd # v2.0.0
         with:
           project-url: https://github.com/orgs/Mininglamp-OSS/projects/2
           github-token: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Set Module field from repository
+        if: steps.add-project.outputs.itemId
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          ITEM_ID: ${{ steps.add-project.outputs.itemId }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        with:
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          script: |
+            const PROJECT_ID = 'PVT_kwDOEOckHc4BXcvH';
+            const MODULE_FIELD_ID = 'PVTSSF_lADOEOckHc4BXcvHzhSpg48';
+
+            const REPO_MODULE = {
+              'octo-server':           '5f815fea', // server
+              'octo-web':              '7f504362', // web
+              'octo-lib':              '1a18f82d', // lib
+              'octo-admin':            '0793acaf', // admin
+              'octo-matter':           '32538d6f', // matter
+              'octo-adapters':         '68365b07', // adapters
+              'openclaw-channel-octo': '68365b07', // adapters
+              'octo-smart-summary':    'a8b45d67', // smart-summary
+              'octo-deployment':       'ee961c44', // deployment
+              'octo-speech':           'eba53c28', // speech
+              '.github':               'ae83be09', // infra
+              'community':             'ae83be09', // infra
+            };
+
+            const optionId = REPO_MODULE[process.env.REPO_NAME];
+            if (!optionId) {
+              core.info(`No Module mapping for repo "${process.env.REPO_NAME}" — skipping`);
+              return;
+            }
+
+            await github.graphql(`
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: { singleSelectOptionId: $optionId }
+                }) {
+                  projectV2Item { id }
+                }
+              }
+            `, {
+              projectId: PROJECT_ID,
+              itemId: process.env.ITEM_ID,
+              fieldId: MODULE_FIELD_ID,
+              optionId,
+            });
+
+            core.info(`Set Module to "${process.env.REPO_NAME}" mapping for item ${process.env.ITEM_ID}`);
