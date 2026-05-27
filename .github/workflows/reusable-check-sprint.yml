@@ -1,5 +1,22 @@
 # Reusable workflow: Check Sprint on Merge
 #
+# DESIGN: ISSUE-FIRST SPRINT CHECK
+#
+# Sprint is set on Issues, not PRs. Developers link their PR to an issue
+# via "Closes #<issue>" in the PR description. This workflow checks that:
+#   1. The PR has at least one linked issue (closingIssuesReferences)
+#   2. The linked issue is on the Octo Board with the current Sprint set
+#
+# Fallback (backward compatibility):
+#   If no linked issue has a Sprint, the PR's own Sprint on the board
+#   is checked as a fallback. This lets existing PRs with Sprint set
+#   directly continue to pass during the transition period.
+#
+# Developer workflow:
+#   - Write "Closes #<issue>" in the PR description
+#   - Ask a Maintainer to assign the issue to the current Sprint on the Board
+#   - Re-run this check if it failed before the Maintainer updated the Sprint
+#
 # KNOWN LIMITATION: STALE CHECK ON SPRINT ROLLOVER
 #
 # This check runs at push time. Branch protection caches the result per
@@ -42,7 +59,9 @@
 #
 #   on:
 #     pull_request_target:
-#       types: [opened, synchronize, reopened]
+#       types: [opened, synchronize, reopened, edited]
+#       # Include "edited" so the check re-runs when the PR description is
+#       # updated (e.g. developer adds "Closes #<issue>" after opening).
 #
 #   jobs:
 #     check-sprint:
@@ -290,15 +309,39 @@ jobs:
           print(f"Current sprint: {current_sprint['title']} "
                 f"({current_sprint['startDate']} + {current_sprint['duration']}d)")
 
-          # --- Step 2: Get the PR's Sprint value from the project board -------------
+          # --- Step 2: Get linked issues (Issue-first) + PR fallback ---------------
+          #
+          # Design: Sprint is set on Issues, not PRs.
+          #   1. Query closingIssuesReferences to find linked issues.
+          #   2. For each linked issue, check its projectItems on the Octo Board.
+          #   3. If found and Sprint matches current sprint → PASS.
+          #   4. Fallback: if PR itself has Sprint on the Board → PASS (compat).
+          #
+          # IMPORTANT: fieldValueByName is case-sensitive. If the Sprint field on the
+          # Octo Board is ever renamed (e.g. to "sprint" or "SPRINT"), update this query.
 
           try:
-              # IMPORTANT: fieldValueByName is case-sensitive. If the Sprint field on the
-              # Octo Board is ever renamed (e.g. to "sprint" or "SPRINT"), update this query.
               pr_query = """
               query($owner: String!, $name: String!, $number: Int!) {
                 repository(owner: $owner, name: $name) {
                   pullRequest(number: $number) {
+                    closingIssuesReferences(first: 10) {
+                      nodes {
+                        number
+                        title
+                        projectItems(first: 10) {
+                          nodes {
+                            project { id }
+                            sprint: fieldValueByName(name: "Sprint") {
+                              ... on ProjectV2ItemFieldIterationValue {
+                                iterationId
+                                title
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
                     projectItems(first: 100) {
                       nodes {
                         project { id }
@@ -327,7 +370,8 @@ jobs:
 
               data = graphql(pr_query, variables=pr_variables)
               pr = data["repository"]["pullRequest"]
-              items = pr["projectItems"]["nodes"]
+              linked_issues = pr["closingIssuesReferences"]["nodes"]
+              pr_items = pr["projectItems"]["nodes"]
           except (KeyError, TypeError) as e:
               print(f"::error::Failed to read PR project data. "
                     "Check that PROJECT_TOKEN has read:project + read:org scope "
@@ -362,39 +406,93 @@ jobs:
                         f"freshness enforcement. Detail: {e}")
                   sys.exit(1)
 
-          # Find the item belonging to the configured project (match by node ID)
-          board_item = None
-          for item in items:
+          # --- Step 3: Issue-first Sprint evaluation --------------------------------
+          #
+          # Priority order:
+          #   1. Linked issue with matching Sprint  → PASS
+          #   2. PR's own Sprint matches            → PASS (backward-compat fallback)
+          #   3. Everything else                    → FAIL (with specific error message)
+
+          # Find PR's own board item for fallback
+          pr_board_item = None
+          for item in pr_items:
               if item["project"]["id"] == project_id:
-                  board_item = item
+                  pr_board_item = item
                   break
 
-          if board_item is None and len(items) == 100:
+          if pr_board_item is None and len(pr_items) == 100:
               print("::warning::projectItems page cap (100) reached without finding "
-                    "the Octo Board item. This should never happen in practice. "
-                    "Check project configuration.")
+                    "the Octo Board item for the PR. Check project configuration.")
 
-          # --- Step 3: Evaluate result ----------------------------------------------
+          # Scan linked issues for a Sprint on the Octo Board
+          issue_sprint_title = None
+          issue_sprint_id = None
+          found_issue_on_board = False  # True if any linked issue appears on the board
 
-          if board_item is None or board_item.get("sprint") is None:
-              print(
-                  f"::error::Sprint not set. "
-                  f"Please set Sprint = {current_sprint['title']} on the Octo Board "
-                  f"({BOARD_URL}), then go to Actions UI and re-run this check."
-              )
-              sys.exit(1)
+          for issue in linked_issues:
+              for item in issue["projectItems"]["nodes"]:
+                  if item["project"]["id"] == project_id:
+                      found_issue_on_board = True
+                      sprint_val = item.get("sprint")
+                      if sprint_val:
+                          issue_sprint_title = sprint_val["title"]
+                          issue_sprint_id = sprint_val["iterationId"]
+                          break
+              if issue_sprint_id:
+                  break
 
-          pr_sprint_title = board_item["sprint"]["title"]
-          pr_sprint_id = board_item["sprint"]["iterationId"]
+          # ---- Evaluation ----
 
-          if pr_sprint_id != current_sprint["id"]:
+          # Case A: Linked issue has matching Sprint → PASS ✅
+          if issue_sprint_id and issue_sprint_id == current_sprint["id"]:
+              print(f"✅ Linked issue Sprint matches current sprint: {issue_sprint_title}")
+              sys.exit(0)
+
+          # Case B: Linked issue has a Sprint but it's wrong → FAIL with mismatch error
+          if issue_sprint_id and issue_sprint_id != current_sprint["id"]:
               print(
                   f"::error::Sprint mismatch. "
                   f"Current sprint is {current_sprint['title']}, "
-                  f"but this PR's Sprint is {pr_sprint_title}. "
-                  f"Please update Sprint on the Board, then re-run this check in Actions UI."
+                  f"but linked issue Sprint is {issue_sprint_title}. "
+                  f"Please update the linked issue's Sprint on the Board "
+                  f"({BOARD_URL}), then re-run this check."
               )
               sys.exit(1)
 
-          print(f"Sprint is correctly set to: {pr_sprint_title}")
+          # Case C: No linked issue Sprint found — try PR fallback
+          if pr_board_item and pr_board_item.get("sprint"):
+              pr_sprint_title = pr_board_item["sprint"]["title"]
+              pr_sprint_id = pr_board_item["sprint"]["iterationId"]
+              if pr_sprint_id == current_sprint["id"]:
+                  print(f"✅ PR Sprint (fallback) matches current sprint: {pr_sprint_title}")
+                  sys.exit(0)
+              else:
+                  print(
+                      f"::error::Sprint mismatch. "
+                      f"Current sprint is {current_sprint['title']}, "
+                      f"but this PR's Sprint is {pr_sprint_title}. "
+                      f"Please update Sprint on the Board ({BOARD_URL}), "
+                      f"then re-run this check in Actions UI."
+                  )
+                  sys.exit(1)
+
+          # Case D: No Sprint anywhere — give the most actionable error message
+
+          if not linked_issues:
+              # PR has no "Closes #xxx" at all
+              print(
+                  "::error::No linked issue found. "
+                  "Please add a 'Closes #<issue>' reference to the PR description, "
+                  "then re-run this check."
+              )
+              sys.exit(1)
+
+          # Linked issues exist but none have Sprint set on the Board
+          print(
+              f"::error::Linked issue has no Sprint set. "
+              f"Please ask a Maintainer to assign the linked issue to "
+              f"{current_sprint['title']} on the Octo Board ({BOARD_URL}), "
+              f"then re-run this check."
+          )
+          sys.exit(1)
           PYTHON_SCRIPT

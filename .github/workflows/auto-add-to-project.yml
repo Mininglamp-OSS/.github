@@ -55,8 +55,12 @@ on:
   # head ref) to this workflow. pull_request_target runs in the base repo's
   # privileged context with access to PROJECT_TOKEN; checking out untrusted
   # PR code here would let a malicious fork exfiltrate the token.
+  #
+  # "edited" is included so that Sprint inheritance re-runs when the PR
+  # description is updated (e.g. developer adds "Closes #<issue>" after
+  # opening). The add-to-project step is idempotent for already-added items.
   pull_request_target:
-    types: [opened]
+    types: [opened, edited]
 
 permissions: {}
 
@@ -125,3 +129,103 @@ jobs:
             });
 
             core.info(`Set Module to "${process.env.REPO_NAME}" mapping for item ${process.env.ITEM_ID}`);
+
+      - name: Inherit Sprint from linked issues
+        # Only run for PR events (issues event has no linked issues to inherit from).
+        # Silently skips if no linked issue has a Sprint — does not fail the workflow.
+        if: >-
+          steps.add-project.outputs.itemId &&
+          github.event_name == 'pull_request_target'
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          ITEM_ID: ${{ steps.add-project.outputs.itemId }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO_OWNER: ${{ github.event.repository.owner.login }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        with:
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          script: |
+            const PROJECT_ID   = 'PVT_kwDOEOckHc4BXcvH';
+            const SPRINT_FIELD = 'PVTIF_lADOEOckHc4BXcvHzhSphQA';
+
+            const owner    = process.env.REPO_OWNER;
+            const repoName = process.env.REPO_NAME;
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
+            const itemId   = process.env.ITEM_ID;
+
+            // Query linked issues and their Sprint values on the Octo Board
+            const result = await github.graphql(`
+              query($owner: String!, $name: String!, $number: Int!) {
+                repository(owner: $owner, name: $name) {
+                  pullRequest(number: $number) {
+                    closingIssuesReferences(first: 10) {
+                      nodes {
+                        number
+                        title
+                        projectItems(first: 10) {
+                          nodes {
+                            project { id }
+                            sprint: fieldValueByName(name: "Sprint") {
+                              ... on ProjectV2ItemFieldIterationValue {
+                                iterationId
+                                title
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `, { owner, name: repoName, number: prNumber });
+
+            const linkedIssues = result?.repository?.pullRequest
+              ?.closingIssuesReferences?.nodes ?? [];
+
+            if (linkedIssues.length === 0) {
+              core.info('No linked issues found — skipping Sprint inheritance.');
+              return;
+            }
+
+            // Find the first linked issue that has a Sprint on the Octo Board
+            let sprintIterationId = null;
+            let sprintTitle = null;
+
+            for (const issue of linkedIssues) {
+              for (const projItem of (issue.projectItems?.nodes ?? [])) {
+                if (projItem.project?.id === PROJECT_ID && projItem.sprint?.iterationId) {
+                  sprintIterationId = projItem.sprint.iterationId;
+                  sprintTitle = projItem.sprint.title;
+                  break;
+                }
+              }
+              if (sprintIterationId) break;
+            }
+
+            if (!sprintIterationId) {
+              core.info('No linked issue has a Sprint set on the Octo Board — skipping.');
+              return;
+            }
+
+            // Copy the Sprint to the PR's board item
+            await github.graphql(`
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $iterationId: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: { iterationId: $iterationId }
+                }) {
+                  projectV2Item { id }
+                }
+              }
+            `, {
+              projectId: PROJECT_ID,
+              itemId,
+              fieldId: SPRINT_FIELD,
+              iterationId: sprintIterationId,
+            });
+
+            core.info(`Inherited Sprint "${sprintTitle}" from linked issue onto PR item ${itemId}.`);
