@@ -154,16 +154,16 @@ jobs:
             const prNumber = parseInt(process.env.PR_NUMBER, 10);
             const itemId   = process.env.ITEM_ID;
 
-            // Query linked issues and their Sprint values on the Octo Board
+            // Query linked issues and their Sprint values, plus the PR's own Sprint on the board.
             const result = await github.graphql(`
               query($owner: String!, $name: String!, $number: Int!) {
                 repository(owner: $owner, name: $name) {
                   pullRequest(number: $number) {
-                    closingIssuesReferences(first: 10) {
+                    closingIssuesReferences(first: 100) {
                       nodes {
                         number
                         title
-                        projectItems(first: 10) {
+                        projectItems(first: 100) {
                           nodes {
                             project { id }
                             sprint: fieldValueByName(name: "Sprint") {
@@ -172,6 +172,17 @@ jobs:
                                 title
                               }
                             }
+                          }
+                        }
+                      }
+                    }
+                    projectItems(first: 10) {
+                      nodes {
+                        project { id }
+                        sprint: fieldValueByName(name: "Sprint") {
+                          ... on ProjectV2ItemFieldIterationValue {
+                            iterationId
+                            title
                           }
                         }
                       }
@@ -186,6 +197,16 @@ jobs:
 
             if (linkedIssues.length === 0) {
               core.info('No linked issues found — skipping Sprint inheritance.');
+              return;
+            }
+
+            // Check if the PR's board item already has a Sprint; if so, skip inheritance
+            // to avoid overwriting a Sprint that was set intentionally (e.g. a developer
+            // later edited the PR body to close an older-sprint issue).
+            const prProjectItems = result?.repository?.pullRequest?.projectItems?.nodes ?? [];
+            const prBoardItem = prProjectItems.find(item => item.project?.id === PROJECT_ID);
+            if (prBoardItem?.sprint?.iterationId) {
+              core.info(`PR item already has Sprint "${prBoardItem.sprint.title}" — skipping inheritance to avoid overwrite.`);
               return;
             }
 
@@ -229,3 +250,4 @@ jobs:
             });
 
             core.info(`Inherited Sprint "${sprintTitle}" from linked issue onto PR item ${itemId}.`);
+

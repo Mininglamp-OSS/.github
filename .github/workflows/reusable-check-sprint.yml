@@ -325,11 +325,11 @@ jobs:
               query($owner: String!, $name: String!, $number: Int!) {
                 repository(owner: $owner, name: $name) {
                   pullRequest(number: $number) {
-                    closingIssuesReferences(first: 10) {
+                    closingIssuesReferences(first: 100) {
                       nodes {
                         number
                         title
-                        projectItems(first: 10) {
+                        projectItems(first: 100) {
                           nodes {
                             project { id }
                             sprint: fieldValueByName(name: "Sprint") {
@@ -424,36 +424,37 @@ jobs:
               print("::warning::projectItems page cap (100) reached without finding "
                     "the Octo Board item for the PR. Check project configuration.")
 
-          # Scan linked issues for a Sprint on the Octo Board
-          issue_sprint_title = None
-          issue_sprint_id = None
-          found_issue_on_board = False  # True if any linked issue appears on the board
+          # Scan ALL linked issues for a Sprint match on the Octo Board.
+          # Do not break early on the first issue with any sprint — if the
+          # first issue has an old sprint and the second has the current one,
+          # an early exit would produce a false mismatch error.
+          mismatch_title = None     # sprint title of the most recent mismatching issue
+          found_on_board = False    # True if any linked issue appears on the board
 
           for issue in linked_issues:
               for item in issue["projectItems"]["nodes"]:
-                  if item["project"]["id"] == project_id:
-                      found_issue_on_board = True
-                      sprint_val = item.get("sprint")
-                      if sprint_val:
-                          issue_sprint_title = sprint_val["title"]
-                          issue_sprint_id = sprint_val["iterationId"]
-                          break
-              if issue_sprint_id:
-                  break
+                  if item["project"]["id"] != project_id:
+                      continue
+                  found_on_board = True
+                  sprint_val = item.get("sprint")
+                  if not sprint_val:
+                      continue
+                  if sprint_val["iterationId"] == current_sprint["id"]:
+                      print(f"✅ Linked issue Sprint matches current sprint: {sprint_val['title']}")
+                      sys.exit(0)
+                  if mismatch_title is None:
+                      mismatch_title = sprint_val["title"]
 
-          # ---- Evaluation ----
+          # ---- Evaluation (no linked issue matched the current sprint) ----
 
-          # Case A: Linked issue has matching Sprint → PASS ✅
-          if issue_sprint_id and issue_sprint_id == current_sprint["id"]:
-              print(f"✅ Linked issue Sprint matches current sprint: {issue_sprint_title}")
-              sys.exit(0)
+          # Case A: Any linked issue Sprint matched → already exited with 0 above.
 
           # Case B: Linked issue has a Sprint but it's wrong → FAIL with mismatch error
-          if issue_sprint_id and issue_sprint_id != current_sprint["id"]:
+          if mismatch_title is not None:
               print(
                   f"::error::Sprint mismatch. "
                   f"Current sprint is {current_sprint['title']}, "
-                  f"but linked issue Sprint is {issue_sprint_title}. "
+                  f"but linked issue Sprint is {mismatch_title}. "
                   f"Please update the linked issue's Sprint on the Board "
                   f"({BOARD_URL}), then re-run this check."
               )
@@ -487,7 +488,16 @@ jobs:
               )
               sys.exit(1)
 
-          # Linked issues exist but none have Sprint set on the Board
+          if not found_on_board:
+              # Linked issues exist but none are on the Octo Board
+              print(
+                  f"::error::No linked issue found on the Octo Board. "
+                  f"Please ask a Maintainer to add the linked issue to "
+                  f"the Octo Board ({BOARD_URL}), then re-run this check."
+              )
+              sys.exit(1)
+
+          # Linked issues are on the board but none have Sprint set
           print(
               f"::error::Linked issue has no Sprint set. "
               f"Please ask a Maintainer to assign the linked issue to "
@@ -496,3 +506,4 @@ jobs:
           )
           sys.exit(1)
           PYTHON_SCRIPT
+
