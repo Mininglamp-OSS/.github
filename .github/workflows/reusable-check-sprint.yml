@@ -243,6 +243,47 @@ jobs:
               return datetime.now(ZoneInfo("Asia/Shanghai")).date()
 
 
+          # --- Step 0: Skip draft PRs before any board-state queries ---------------
+          #
+          # This must run BEFORE Step 1 (sprint resolution) so draft PRs are never
+          # blocked by board-health failures (missing Sprint field, no active
+          # iteration, insufficient token scopes, etc.).
+          #
+          # NOTE: Callers must include `ready_for_review` in their pull_request_target
+          # types to ensure this check re-evaluates when a draft PR is marked ready
+          # for review. Without it, the green "skipped" result cached on the draft
+          # SHA will remain valid after the PR is promoted to ready, allowing it to
+          # merge without Sprint validation.
+          # See: https://github.com/Mininglamp-OSS/.github/pull/51
+
+          draft_data = graphql(
+              """
+              query($owner: String!, $name: String!, $number: Int!) {
+                repository(owner: $owner, name: $name) {
+                  pullRequest(number: $number) {
+                    isDraft
+                  }
+                }
+              }
+              """,
+              variables={"owner": REPO_OWNER, "name": REPO_SHORT, "number": PR_NUMBER},
+          )
+
+          try:
+              is_draft = draft_data["repository"]["pullRequest"]["isDraft"]
+          except (KeyError, TypeError) as e:
+              print(f"::error::Failed to read PR draft status for #{PR_NUMBER}. "
+                    f"Detail: {e}")
+              sys.exit(1)
+
+          if is_draft:
+              print("✅ Skipping Sprint check for draft PR.")
+              print("::notice::Draft PR detected. Sprint check skipped.")
+              print("::notice::Callers must include `ready_for_review` in "
+                    "pull_request_target types to re-evaluate this check on "
+                    "draft→ready transition.")
+              sys.exit(0)
+
           # --- Step 1: Determine the current sprint iteration -----------------------
 
           try:
@@ -325,7 +366,6 @@ jobs:
               query($owner: String!, $name: String!, $number: Int!) {
                 repository(owner: $owner, name: $name) {
                   pullRequest(number: $number) {
-                    isDraft
                     closingIssuesReferences(first: 100) {
                       nodes {
                         number
@@ -371,10 +411,6 @@ jobs:
 
               data = graphql(pr_query, variables=pr_variables)
               pr = data["repository"]["pullRequest"]
-
-              if pr.get("isDraft"):
-                  print("✅ Skipping Sprint check for draft PR.")
-                  sys.exit(0)
 
               linked_issues = pr["closingIssuesReferences"]["nodes"]
               pr_items = pr["projectItems"]["nodes"]
