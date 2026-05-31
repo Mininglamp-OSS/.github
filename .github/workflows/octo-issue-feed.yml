@@ -29,6 +29,11 @@ on:
         required: false
         default: 'https://im.deepminer.com.cn/api'
         description: 'Octo IM API base URL. Only the production endpoint is allowlisted. Any other value will cause the workflow to fail.'
+      feed_group_id:
+        type: string
+        required: false
+        default: '151a45970e1546afa9e947ac36a5c4e5'
+        description: 'Octo IM group ID for the central issue feed channel.'
     secrets:
       OCTO_BOT_TOKEN:
         required: true
@@ -50,6 +55,7 @@ jobs:
           ISSUE_AUTHOR: ${{ inputs.issue_author }}
           EVENT_ACTION: ${{ inputs.event_action }}
           API_BASE_URL: ${{ inputs.api_base_url }}
+          FEED_GROUP_ID: ${{ inputs.feed_group_id }}
         run: |
           python3 - << 'PYEOF'
           import os, json, re, sys, time, urllib.request, urllib.error
@@ -150,8 +156,8 @@ jobs:
               failed.append(group_id)
 
           # Send to issue-feed group only
-          ISSUE_FEED_GROUP = '151a45970e1546afa9e947ac36a5c4e5'
-          send(ISSUE_FEED_GROUP, feed_msg)
+          feed_gid = require_env('FEED_GROUP_ID')
+          send(feed_gid, feed_msg)
 
           if failed:
               sys.exit(1)

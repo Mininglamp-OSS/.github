@@ -33,6 +33,11 @@ on:
         required: false
         default: 'https://im.deepminer.com.cn/api'
         description: 'Octo IM API base URL. Only the production endpoint is allowlisted; any other value will cause the workflow to fail.'
+      ci_status_group_id:
+        type: string
+        required: false
+        default: '4ade985d984e432eb7fbdd0ad4f8118a'
+        description: 'Octo IM group ID for the central CI status feed.'
     secrets:
       OCTO_BOT_TOKEN:
         required: true
@@ -58,6 +63,7 @@ jobs:
           RUN_URL: ${{ inputs.run_url }}
           PROJECT_GROUP_ID: ${{ inputs.project_group_id }}
           API_BASE_URL: ${{ inputs.api_base_url }}
+          CI_STATUS_GROUP_ID: ${{ inputs.ci_status_group_id }}
         run: |
           python3 - << 'PYEOF'
           import os, json, re, time, urllib.request, urllib.error, sys
@@ -99,6 +105,7 @@ jobs:
           wf_name   = require_env('WORKFLOW_NAME')
           run_url   = require_env('RUN_URL')
           proj_gid  = require_group_id('PROJECT_GROUP_ID')
+          ci_gid    = require_group_id('CI_STATUS_GROUP_ID')
           gh_token  = require_env('GITHUB_TOKEN')
           bot_token = require_env('OCTO_BOT_TOKEN')
           
@@ -263,7 +270,7 @@ jobs:
               failed.append(group_id)
           
           # Push to ci-status group and the repo's project group
-          send('4ade985d984e432eb7fbdd0ad4f8118a', msg)
+          send(ci_gid, msg)
           send(proj_gid, msg)
           if failed:
               sys.exit(1)
