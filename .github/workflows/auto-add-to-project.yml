@@ -53,6 +53,17 @@ name: Auto add to project (reusable)
 
 on:
   workflow_call:
+    inputs:
+      project-number:
+        description: "GitHub Project V2 number (org-level)"
+        required: false
+        type: number
+        default: 2
+      org-login:
+        description: "GitHub organization login"
+        required: false
+        type: string
+        default: "Mininglamp-OSS"
     secrets:
       PROJECT_TOKEN:
         required: true
@@ -84,7 +95,7 @@ jobs:
         id: add-project
         uses: actions/add-to-project@5afcf98fcd03f1c2f92c3c83f58ae24323cc57fd # v2.0.0
         with:
-          project-url: https://github.com/orgs/Mininglamp-OSS/projects/2
+          project-url: https://github.com/orgs/${{ inputs.org-login || 'Mininglamp-OSS' }}/projects/${{ inputs.project-number || 2 }}
           github-token: ${{ secrets.PROJECT_TOKEN }}
 
       - name: Set Module field from repository
@@ -94,37 +105,81 @@ jobs:
         env:
           ITEM_ID: ${{ steps.add-project.outputs.itemId }}
           REPO_NAME: ${{ github.event.repository.name }}
+          ORG_LOGIN: ${{ inputs.org-login || 'Mininglamp-OSS' }}
+          PROJECT_NUMBER: ${{ inputs.project-number || 2 }}
         with:
           github-token: ${{ secrets.PROJECT_TOKEN }}
           script: |
-            const PROJECT_ID = 'PVT_kwDOEOckHc4BXcvH';
-            const MODULE_FIELD_ID = 'PVTSSF_lADOEOckHc4BXcvHzhSpg48';
-
+            // Map repo name → Module option NAME (resolved to an option ID at runtime).
+            // Names — not opaque option IDs — survive Module-field rebuilds as long as
+            // the option labels match.
             const REPO_MODULE = {
-              '.github':               'ae83be09', // infra
-              'claw-channel-octo':     '68365b07', // adapters
-              'community':             'ae83be09', // infra
-              'octo-adapters':         '68365b07', // adapters
-              'octo-admin':            '0793acaf', // admin
-              'octo-android':          '39fb6657', // android
-              'octo-cli':              '9ac9e614', // cli
-              'octo-daemon-cli':       '9ac9e614', // cli
-              'octo-deployment':       'ee961c44', // deployment
-              'octo-im':               '5f815fea', // server
-              'octo-ios':              'f06b0979', // ios
-              'octo-lib':              '1a18f82d', // lib
-              'octo-matter':           '32538d6f', // matter
-              'octo-server':           '5f815fea', // server
-              'octo-smart-summary':    'a8b45d67', // smart-summary
-              'octo-speech':           'eba53c28', // speech
-              'octo-version-sync':     'ae83be09', // infra
-              'octo-web':              '7f504362', // web
-              'openclaw-channel-octo': '68365b07', // adapters
+              '.github':               'infra',
+              'claw-channel-octo':     'adapters',
+              'community':             'infra',
+              'octo-adapters':         'adapters',
+              'octo-admin':            'admin',
+              'octo-android':          'android',
+              'octo-cli':              'cli',
+              'octo-daemon-cli':       'cli',
+              'octo-deployment':       'deployment',
+              'octo-im':               'server',
+              'octo-ios':              'ios',
+              'octo-lib':              'lib',
+              'octo-matter':           'matter',
+              'octo-server':           'server',
+              'octo-smart-summary':    'smart-summary',
+              'octo-speech':           'speech',
+              'octo-version-sync':     'infra',
+              'octo-web':              'web',
+              'openclaw-channel-octo': 'adapters',
             };
 
-            const optionId = REPO_MODULE[process.env.REPO_NAME];
-            if (!optionId) {
-              core.info(`No Module mapping for repo "${process.env.REPO_NAME}" — skipping`);
+            const repoName = process.env.REPO_NAME;
+            const orgLogin = process.env.ORG_LOGIN;
+            const projectNumber = parseInt(process.env.PROJECT_NUMBER, 10);
+
+            const moduleName = REPO_MODULE[repoName];
+            if (!moduleName) {
+              core.info(`No Module mapping for repo "${repoName}" — skipping`);
+              return;
+            }
+
+            // Resolve project ID + Module field (id + options) by name at runtime,
+            // so this workflow self-heals across project rebuilds / field recreations
+            // as long as the "Module" field and its option labels match.
+            const projectData = await github.graphql(`
+              query($orgLogin: String!, $projectNumber: Int!) {
+                organization(login: $orgLogin) {
+                  projectV2(number: $projectNumber) {
+                    id
+                    field(name: "Module") {
+                      ... on ProjectV2SingleSelectField {
+                        id
+                        options {
+                          id
+                          name
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `, { orgLogin, projectNumber });
+
+            const project = projectData?.organization?.projectV2;
+            if (!project?.id) {
+              core.warning(`Project #${projectNumber} not found on org "${orgLogin}" — skipping Module set`);
+              return;
+            }
+            const moduleField = project.field;
+            if (!moduleField?.id) {
+              core.warning(`"Module" single-select field not found on project #${projectNumber} — skipping`);
+              return;
+            }
+            const option = moduleField.options.find(o => o.name === moduleName);
+            if (!option) {
+              core.warning(`Module option "${moduleName}" not found on project — skipping (available: ${moduleField.options.map(o => o.name).join(', ')})`);
               return;
             }
 
@@ -140,13 +195,13 @@ jobs:
                 }
               }
             `, {
-              projectId: PROJECT_ID,
+              projectId: project.id,
               itemId: process.env.ITEM_ID,
-              fieldId: MODULE_FIELD_ID,
-              optionId,
+              fieldId: moduleField.id,
+              optionId: option.id,
             });
 
-            core.info(`Set Module to "${process.env.REPO_NAME}" mapping for item ${process.env.ITEM_ID}`);
+            core.info(`Set Module to "${moduleName}" for repo "${repoName}" on item ${process.env.ITEM_ID}`);
 
       - name: Inherit Sprint from linked issues
         # Only run for PR events (issues event has no linked issues to inherit from).
@@ -161,16 +216,46 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO_OWNER: ${{ github.event.repository.owner.login }}
           REPO_NAME: ${{ github.event.repository.name }}
+          ORG_LOGIN: ${{ inputs.org-login || 'Mininglamp-OSS' }}
+          PROJECT_NUMBER: ${{ inputs.project-number || 2 }}
         with:
           github-token: ${{ secrets.PROJECT_TOKEN }}
           script: |
-            const PROJECT_ID   = 'PVT_kwDOEOckHc4BXcvH';
-            const SPRINT_FIELD = 'PVTIF_lADOEOckHc4BXcvHzhSphQA';
-
             const owner    = process.env.REPO_OWNER;
             const repoName = process.env.REPO_NAME;
             const prNumber = parseInt(process.env.PR_NUMBER, 10);
             const itemId   = process.env.ITEM_ID;
+            const orgLogin = process.env.ORG_LOGIN;
+            const projectNumber = parseInt(process.env.PROJECT_NUMBER, 10);
+
+            // Resolve project ID + Sprint iteration field ID by name at runtime.
+            const projectData = await github.graphql(`
+              query($orgLogin: String!, $projectNumber: Int!) {
+                organization(login: $orgLogin) {
+                  projectV2(number: $projectNumber) {
+                    id
+                    field(name: "Sprint") {
+                      ... on ProjectV2IterationField {
+                        id
+                      }
+                    }
+                  }
+                }
+              }
+            `, { orgLogin, projectNumber });
+
+            const project = projectData?.organization?.projectV2;
+            if (!project?.id) {
+              core.warning(`Project #${projectNumber} not found on org "${orgLogin}" — skipping Sprint inheritance`);
+              return;
+            }
+            const sprintField = project.field;
+            if (!sprintField?.id) {
+              core.warning(`"Sprint" iteration field not found on project #${projectNumber} — skipping`);
+              return;
+            }
+            const projectId = project.id;
+            const sprintFieldId = sprintField.id;
 
             // Query linked issues and their Sprint values, plus the PR's own Sprint on the board.
             const result = await github.graphql(`
@@ -222,7 +307,7 @@ jobs:
             // to avoid overwriting a Sprint that was set intentionally (e.g. a developer
             // later edited the PR body to close an older-sprint issue).
             const prProjectItems = result?.repository?.pullRequest?.projectItems?.nodes ?? [];
-            const prBoardItem = prProjectItems.find(item => item.project?.id === PROJECT_ID);
+            const prBoardItem = prProjectItems.find(item => item.project?.id === projectId);
             if (prBoardItem?.sprint?.iterationId) {
               core.info(`PR item already has Sprint "${prBoardItem.sprint.title}" — skipping inheritance to avoid overwrite.`);
               return;
@@ -234,7 +319,7 @@ jobs:
 
             for (const issue of linkedIssues) {
               for (const projItem of (issue.projectItems?.nodes ?? [])) {
-                if (projItem.project?.id === PROJECT_ID && projItem.sprint?.iterationId) {
+                if (projItem.project?.id === projectId && projItem.sprint?.iterationId) {
                   sprintIterationId = projItem.sprint.iterationId;
                   sprintTitle = projItem.sprint.title;
                   break;
@@ -261,9 +346,9 @@ jobs:
                 }
               }
             `, {
-              projectId: PROJECT_ID,
+              projectId,
               itemId,
-              fieldId: SPRINT_FIELD,
+              fieldId: sprintFieldId,
               iterationId: sprintIterationId,
             });
 
