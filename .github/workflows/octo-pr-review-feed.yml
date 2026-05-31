@@ -60,7 +60,7 @@ jobs:
           import urllib.request
           import urllib.error
 
-          ALLOWED_ACTIONS = {"opened", "ready_for_review", "review_requested", "synchronize"}
+          ALLOWED_ACTIONS = {"ready_for_review", "review_requested"}
 
           def require_env(name):
               value = os.environ.get(name, "").strip()
@@ -156,25 +156,16 @@ jobs:
                   sys.exit(0)
 
               emoji_map = {
-                  "opened": "\U0001f535",
                   "ready_for_review": "✅",
                   "review_requested": "\U0001f440",
-                  "synchronize": "\U0001f501",
               }
               emoji = emoji_map[event_action]
 
-              if event_action == "synchronize":
-                  message = (
-                      f"{emoji} [{repo_name}] PR #{pr_number} · {pr_title} — new commits pushed\n"
-                      f"\U0001f464 {pr_author}\n"
-                      f"\U0001f517 {pr_url}"
-                  )
-              else:
-                  message = (
-                      f"{emoji} [{repo_name}] PR #{pr_number} · {pr_title}\n"
-                      f"\U0001f464 {pr_author}\n"
-                      f"\U0001f517 {pr_url}"
-                  )
+              message = (
+                  f"{emoji} [{repo_name}] PR #{pr_number} · {pr_title}\n"
+                  f"\U0001f464 {pr_author}\n"
+                  f"\U0001f517 {pr_url}"
+              )
 
               failed = []
               send_message(api_base_url, token, project_group_id, message, failed)

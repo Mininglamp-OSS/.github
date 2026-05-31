@@ -82,7 +82,7 @@ jobs:
           import urllib.error
 
           ALLOWED_KINDS = {
-              "pr_merged", "pr_closed", "pr_reopened",
+              "pr_merged", "pr_closed",
               "review_approved", "review_changes_requested"
           }
 
@@ -170,6 +170,7 @@ jobs:
               pr_author = sanitize_text(require_env('PR_AUTHOR'), max_len=80)
               event_kind = require_env("EVENT_KIND")
               reviewer = sanitize_text(get_env('REVIEWER'), max_len=80)
+              reviewer_display = reviewer if reviewer else "(unknown)"
               pr_additions = int(get_env("PR_ADDITIONS", "0") or "0")
               pr_deletions = int(get_env("PR_DELETIONS", "0") or "0")
               pr_changed_files = int(get_env("PR_CHANGED_FILES", "0") or "0")
@@ -199,22 +200,16 @@ jobs:
                       f"\U0001f464 {pr_author}\n"
                       f"\U0001f517 {pr_url}"
                   )
-              elif event_kind == "pr_reopened":
-                  message = (
-                      f"\U0001f504 [{repo_name}] PR #{pr_number} reopened · {pr_title}\n"
-                      f"\U0001f464 {pr_author}\n"
-                      f"\U0001f517 {pr_url}"
-                  )
               elif event_kind == "review_approved":
                   message = (
                       f"✅ [{repo_name}] PR #{pr_number} approved · {pr_title}\n"
-                      f"\U0001f464 reviewer: {reviewer}\n"
+                      f"\U0001f464 reviewer: {reviewer_display}\n"
                       f"\U0001f517 {pr_url}"
                   )
               elif event_kind == "review_changes_requested":
                   message = (
                       f"\U0001f501 [{repo_name}] PR #{pr_number} changes requested · {pr_title}\n"
-                      f"\U0001f464 reviewer: {reviewer}\n"
+                      f"\U0001f464 reviewer: {reviewer_display}\n"
                       f"\U0001f517 {pr_url}"
                   )
 

@@ -59,9 +59,13 @@
 #
 #   on:
 #     pull_request_target:
-#       types: [opened, synchronize, reopened, edited]
+#       types: [opened, synchronize, reopened, edited, ready_for_review, converted_to_draft]
 #       # Include "edited" so the check re-runs when the PR description is
 #       # updated (e.g. developer adds "Closes #<issue>" after opening).
+#       # Include "ready_for_review" and "converted_to_draft" so the check
+#       # re-runs across draft↔ready transitions. REQUIRED for the draft-skip
+#       # to be safe: without "ready_for_review", a stale green from the draft
+#       # SHA persists after promotion to ready and bypasses the Sprint gate.
 #
 #   jobs:
 #     check-sprint:
@@ -242,6 +246,48 @@ jobs:
               """Return today's date in Asia/Shanghai (date-only, no time component)."""
               return datetime.now(ZoneInfo("Asia/Shanghai")).date()
 
+
+          # --- Step 0: Skip draft PRs before any board-state queries ---------------
+          #
+          # This must run BEFORE Step 1 (sprint resolution) so draft PRs are never
+          # blocked by board-health failures (missing Sprint field, no active
+          # iteration, insufficient token scopes, etc.).
+          #
+          # NOTE: Callers must include `ready_for_review` in their pull_request_target
+          # types to ensure this check re-evaluates when a draft PR is marked ready
+          # for review. Without it, the green "skipped" result cached on the draft
+          # SHA will remain valid after the PR is promoted to ready, allowing it to
+          # merge without Sprint validation.
+          # See: https://github.com/Mininglamp-OSS/.github/pull/51
+
+          draft_data = graphql(
+              """
+              query($owner: String!, $name: String!, $number: Int!) {
+                repository(owner: $owner, name: $name) {
+                  pullRequest(number: $number) {
+                    isDraft
+                  }
+                }
+              }
+              """,
+              variables={"owner": REPO_OWNER, "name": REPO_SHORT, "number": PR_NUMBER},
+          )
+
+          try:
+              is_draft = draft_data["repository"]["pullRequest"]["isDraft"]
+          except (KeyError, TypeError) as e:
+              print(f"::error::Failed to read PR draft status for #{PR_NUMBER}. "
+                    f"Detail: {e}")
+              sys.exit(1)
+
+          if is_draft:
+              print("✅ Skipping Sprint check for draft PR.")
+              print("::notice::Draft PR detected. Sprint check skipped (exit 0).")
+              print("::notice::REQUIRED caller config: include `ready_for_review` "
+                    "in `pull_request_target.types`. Without it, this green "
+                    "result is cached on the draft SHA and persists after the "
+                    "PR is marked ready, bypassing the Sprint gate.")
+              sys.exit(0)
 
           # --- Step 1: Determine the current sprint iteration -----------------------
 

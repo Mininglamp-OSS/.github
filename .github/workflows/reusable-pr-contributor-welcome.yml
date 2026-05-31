@@ -107,10 +107,15 @@ jobs:
             }
 
             const body = [
-              `Hey @${username}, thanks for your first contribution to Octo! 🎉`,
+              `Hey @${username}, thanks for your first PR to Octo! 🎉`,
               '',
-              'Welcome to the community, and looking forward to more! 🐙',
+              'A maintainer will review it soon. While you wait, please make sure all CI checks pass.',
               '',
+              'A few helpful links:',
+              '- 📖 [Contributing Guide](https://github.com/Mininglamp-OSS/.github/blob/main/CONTRIBUTING.md)',
+              '- 💬 [Discord Community](https://discord.gg/vj9Vsj9hSB)',
+              '',
+              'Welcome aboard! 🐙',
               '— Octo Team',
             ].join('\n');
 
