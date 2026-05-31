@@ -59,9 +59,13 @@
 #
 #   on:
 #     pull_request_target:
-#       types: [opened, synchronize, reopened, edited]
+#       types: [opened, synchronize, reopened, edited, ready_for_review, converted_to_draft]
 #       # Include "edited" so the check re-runs when the PR description is
 #       # updated (e.g. developer adds "Closes #<issue>" after opening).
+#       # Include "ready_for_review" and "converted_to_draft" so the check
+#       # re-runs across draft↔ready transitions. REQUIRED for the draft-skip
+#       # to be safe: without "ready_for_review", a stale green from the draft
+#       # SHA persists after promotion to ready and bypasses the Sprint gate.
 #
 #   jobs:
 #     check-sprint:
@@ -278,10 +282,11 @@ jobs:
 
           if is_draft:
               print("✅ Skipping Sprint check for draft PR.")
-              print("::notice::Draft PR detected. Sprint check skipped.")
-              print("::notice::Callers must include `ready_for_review` in "
-                    "pull_request_target types to re-evaluate this check on "
-                    "draft→ready transition.")
+              print("::notice::Draft PR detected. Sprint check skipped (exit 0).")
+              print("::notice::REQUIRED caller config: include `ready_for_review` "
+                    "in `pull_request_target.types`. Without it, this green "
+                    "result is cached on the draft SHA and persists after the "
+                    "PR is marked ready, bypassing the Sprint gate.")
               sys.exit(0)
 
           # --- Step 1: Determine the current sprint iteration -----------------------
@@ -411,7 +416,6 @@ jobs:
 
               data = graphql(pr_query, variables=pr_variables)
               pr = data["repository"]["pullRequest"]
-
               linked_issues = pr["closingIssuesReferences"]["nodes"]
               pr_items = pr["projectItems"]["nodes"]
           except (KeyError, TypeError) as e:
