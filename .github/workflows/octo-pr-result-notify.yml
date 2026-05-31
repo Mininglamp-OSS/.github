@@ -82,7 +82,7 @@ jobs:
           import urllib.error
 
           ALLOWED_KINDS = {
-              "pr_merged", "pr_closed", "pr_reopened",
+              "pr_merged", "pr_closed",
               "review_approved", "review_changes_requested"
           }
 
@@ -199,22 +199,18 @@ jobs:
                       f"\U0001f464 {pr_author}\n"
                       f"\U0001f517 {pr_url}"
                   )
-              elif event_kind == "pr_reopened":
-                  message = (
-                      f"\U0001f504 [{repo_name}] PR #{pr_number} reopened · {pr_title}\n"
-                      f"\U0001f464 {pr_author}\n"
-                      f"\U0001f517 {pr_url}"
-                  )
               elif event_kind == "review_approved":
+                  reviewer_display = reviewer if reviewer else "(unknown)"
                   message = (
                       f"✅ [{repo_name}] PR #{pr_number} approved · {pr_title}\n"
-                      f"\U0001f464 reviewer: {reviewer}\n"
+                      f"\U0001f464 reviewer: {reviewer_display}\n"
                       f"\U0001f517 {pr_url}"
                   )
               elif event_kind == "review_changes_requested":
+                  reviewer_display = reviewer if reviewer else "(unknown)"
                   message = (
                       f"\U0001f501 [{repo_name}] PR #{pr_number} changes requested · {pr_title}\n"
-                      f"\U0001f464 reviewer: {reviewer}\n"
+                      f"\U0001f464 reviewer: {reviewer_display}\n"
                       f"\U0001f517 {pr_url}"
                   )
 
