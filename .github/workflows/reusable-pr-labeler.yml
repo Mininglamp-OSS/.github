@@ -29,17 +29,24 @@ jobs:
     steps:
       - name: Apply size label and detect dependency changes
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REPO_OWNER: ${{ inputs.repo_owner }}
+          REPO_NAME: ${{ inputs.repo_name }}
         with:
           script: |
-            const owner = '${{ inputs.repo_owner }}';
-            const repo = '${{ inputs.repo_name }}';
-            const prNumber = Number('${{ inputs.pr_number }}');
+            const owner = process.env.REPO_OWNER;
+            const repo = process.env.REPO_NAME;
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
 
             const LOCKFILES = new Set([
               'go.sum', 'pnpm-lock.yaml', 'package-lock.json', 'yarn.lock',
+              'Podfile.lock',
             ]);
             const DEP_FILES = new Set([
               'go.mod', 'go.sum', 'package.json', 'pnpm-lock.yaml', 'yarn.lock',
+              'Podfile', 'Podfile.lock',
+              'build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts',
             ]);
 
             // Fetch all changed files in the PR
