@@ -26,15 +26,26 @@
 #       secrets:
 #         PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
 #
-# Known callers:
-#   - octo-web
+# Known callers (19 repos):
+#   - .github (direct trigger)
+#   - claw-channel-octo
+#   - community
 #   - octo-adapters
-#   - octo-matter
-#   - octo-smart-summary
 #   - octo-admin
-#   - octo-lib
+#   - octo-android
+#   - octo-cli
+#   - octo-daemon-cli
 #   - octo-deployment
+#   - octo-im
+#   - octo-ios
+#   - octo-lib
+#   - octo-matter
 #   - octo-server
+#   - octo-smart-summary
+#   - octo-speech
+#   - octo-version-sync
+#   - octo-web
+#   - openclaw-channel-octo
 #
 # No "concurrency:" group is defined because actions/add-to-project is
 # idempotent on already-added items — concurrent runs are harmless.
@@ -90,18 +101,25 @@ jobs:
             const MODULE_FIELD_ID = 'PVTSSF_lADOEOckHc4BXcvHzhSpg48';
 
             const REPO_MODULE = {
-              'octo-server':           '5f815fea', // server
-              'octo-web':              '7f504362', // web
-              'octo-lib':              '1a18f82d', // lib
-              'octo-admin':            '0793acaf', // admin
-              'octo-matter':           '32538d6f', // matter
-              'octo-adapters':         '68365b07', // adapters
-              'openclaw-channel-octo': '68365b07', // adapters
-              'octo-smart-summary':    'a8b45d67', // smart-summary
-              'octo-deployment':       'ee961c44', // deployment
-              'octo-speech':           'eba53c28', // speech
               '.github':               'ae83be09', // infra
+              'claw-channel-octo':     '68365b07', // adapters
               'community':             'ae83be09', // infra
+              'octo-adapters':         '68365b07', // adapters
+              'octo-admin':            '0793acaf', // admin
+              'octo-android':          '39fb6657', // android
+              'octo-cli':              '9ac9e614', // cli
+              'octo-daemon-cli':       '9ac9e614', // cli
+              'octo-deployment':       'ee961c44', // deployment
+              'octo-im':               '5f815fea', // server
+              'octo-ios':              'f06b0979', // ios
+              'octo-lib':              '1a18f82d', // lib
+              'octo-matter':           '32538d6f', // matter
+              'octo-server':           '5f815fea', // server
+              'octo-smart-summary':    'a8b45d67', // smart-summary
+              'octo-speech':           'eba53c28', // speech
+              'octo-version-sync':     'ae83be09', // infra
+              'octo-web':              '7f504362', // web
+              'openclaw-channel-octo': '68365b07', // adapters
             };
 
             const optionId = REPO_MODULE[process.env.REPO_NAME];
