@@ -47,9 +47,7 @@ on:
         type: string
         default: 'mock,pb.go,_gen.go,vendor,migrations'
 
-permissions:
-  contents: read
-  pull-requests: write
+permissions: {}
 
 jobs:
   # ── Test (with MySQL + Redis services) ──────────────────────────────
@@ -59,6 +57,8 @@ jobs:
     if: inputs.services
     name: Test (services)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     services:
       mysql:
         image: mysql:8.0
@@ -84,9 +84,9 @@ jobs:
     env:
       OCTO_MASTER_KEY: 0123456789abcdef0123456789abcdef
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ inputs.go-version }}
 
@@ -145,13 +145,39 @@ jobs:
             echo "::endgroup::"
           done < <(go list ./...)
 
-          # Merge JUnit XMLs
+          # Merge JUnit XMLs using Python (gotestsum has no merge subcommand)
           if compgen -G "junit-*.xml" > /dev/null; then
-            gotestsum tool merge junit-*.xml > junit.xml 2>/dev/null || {
-              # Fallback: use the first available XML
-              first_xml=$(ls junit-*.xml 2>/dev/null | head -1)
-              [ -n "$first_xml" ] && cp "$first_xml" junit.xml
-            }
+            python3 - <<'PYEOF'
+          import xml.etree.ElementTree as ET, glob, sys
+
+          xmls = sorted(glob.glob('junit-*.xml'))
+          if not xmls:
+              sys.exit(0)
+
+          root = ET.parse(xmls[0]).getroot()
+          if root.tag != 'testsuites':
+              wrapper = ET.Element('testsuites')
+              wrapper.append(root)
+              root = wrapper
+
+          for xml in xmls[1:]:
+              tree = ET.parse(xml).getroot()
+              if tree.tag == 'testsuites':
+                  for child in tree:
+                      root.append(child)
+              else:
+                  root.append(tree)
+
+          tests = sum(int(ts.get('tests', 0)) for ts in root.findall('testsuite'))
+          failures = sum(int(ts.get('failures', 0)) for ts in root.findall('testsuite'))
+          skipped = sum(int(ts.get('skipped', 0)) for ts in root.findall('testsuite'))
+          root.set('tests', str(tests))
+          root.set('failures', str(failures))
+          root.set('skipped', str(skipped))
+
+          ET.ElementTree(root).write('junit.xml', xml_declaration=True, encoding='utf-8')
+          print(f'Merged {len(xmls)} JUnit XMLs: {tests} tests, {failures} failures, {skipped} skipped')
+          PYEOF
           fi
 
           # Parse test counts from JUnit XML for summary
@@ -161,16 +187,18 @@ jobs:
             total_skip=$(grep -o 'skipped="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*' || echo 0)
           fi
 
-          echo "test_passed=${total_pass}" >> "$GITHUB_OUTPUT"
-          echo "test_failed=${total_fail}" >> "$GITHUB_OUTPUT"
-          echo "test_skipped=${total_skip}" >> "$GITHUB_OUTPUT"
-          echo "test_exit_code=${fail}" >> "$GITHUB_OUTPUT"
+          {
+            echo "test_passed=${total_pass}"
+            echo "test_failed=${total_fail}"
+            echo "test_skipped=${total_skip}"
+            echo "test_exit_code=${fail}"
+          } >> "$GITHUB_OUTPUT"
 
           exit $fail
 
       - name: Upload test artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: test-results
           path: |
@@ -214,10 +242,12 @@ jobs:
     if: ${{ !inputs.services }}
     name: Test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ inputs.go-version }}
 
@@ -241,13 +271,15 @@ jobs:
           total_fail=$(grep -o 'failures="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*' || echo 0)
           total_skip=$(grep -o 'skipped="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*' || echo 0)
 
-          echo "test_passed=${total_pass}" >> "$GITHUB_OUTPUT"
-          echo "test_failed=${total_fail}" >> "$GITHUB_OUTPUT"
-          echo "test_skipped=${total_skip}" >> "$GITHUB_OUTPUT"
+          {
+            echo "test_passed=${total_pass}"
+            echo "test_failed=${total_fail}"
+            echo "test_skipped=${total_skip}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload test artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: test-results
           path: |
@@ -294,53 +326,65 @@ jobs:
       (needs.test-with-services.result == 'success' || needs.test-standalone.result == 'success')
     name: Diff Coverage
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ inputs.go-version }}
 
       - name: Download test results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: test-results
 
       - name: Generate octocov config
         run: |
           # Build exclude list from comma-separated input
-          EXCLUDES=""
-          IFS=',' read -ra PARTS <<< "${{ inputs.coverage-exclude }}"
-          for part in "${PARTS[@]}"; do
-            part=$(echo "$part" | xargs)  # trim whitespace
-            if [ -n "$part" ]; then
-              EXCLUDES="${EXCLUDES}    - '**/*${part}*'\n"
+          EXCLUDE_YAML=""
+          IFS=',' read -ra PATTERNS <<< "${{ inputs.coverage-exclude }}"
+          for p in "${PATTERNS[@]}"; do
+            p="${p// /}"
+            [ -z "$p" ] && continue
+            # If ends with / (directory), use **/p**; otherwise use **/*p
+            if [[ "$p" == */ ]]; then
+              EXCLUDE_YAML="${EXCLUDE_YAML}    - \"**/${p}**\"\n"
+            else
+              EXCLUDE_YAML="${EXCLUDE_YAML}    - \"**/*${p}\"\n"
             fi
           done
 
-          cat > .octocov.yml <<OCTOCOV_EOF
-          # Auto-generated by reusable-go-quality workflow
-          coverage:
-            paths:
-              - coverage.out
-            acceptable: ${{ inputs.coverage-threshold }}
-          diff:
-            coverage:
-              acceptable: ${{ inputs.coverage-threshold }}
-          comment:
-            enable: true
-            hideFooterLink: false
-          summary:
-            enable: true
-          OCTOCOV_EOF
+          # Write octocov config with exclude paths
+          {
+            echo "# Auto-generated by reusable-go-quality workflow"
+            echo "coverage:"
+            echo "  paths:"
+            echo "    - coverage.out"
+            echo "  acceptable: ${{ inputs.coverage-threshold }}%"
+            if [ -n "$EXCLUDE_YAML" ]; then
+              echo "  exclude:"
+              printf '%b' "$EXCLUDE_YAML"
+            fi
+            echo "diff:"
+            echo "  coverage:"
+            echo "    acceptable: ${{ inputs.coverage-threshold }}%"
+            echo "comment:"
+            echo "  enable: true"
+            echo "  hideFooterLink: false"
+            echo "summary:"
+            echo "  enable: true"
+          } > .octocov.yml
 
           echo "Generated .octocov.yml:"
           cat .octocov.yml
 
       - name: Run octocov
-        uses: k1LoW/octocov-action@v1
+        uses: k1LoW/octocov-action@b3b6ee60482a667950f87553abf1df63217235d9 # v1
 
       - name: Core packages coverage check
         if: inputs.core-packages != ''
@@ -361,8 +405,8 @@ jobs:
             pkg_coverage=$(go tool cover -func=coverage.out 2>/dev/null | grep "^${pkg}" | tail -1 | awk '{print $NF}' | tr -d '%' || echo "0")
 
             if [ -z "$pkg_coverage" ] || [ "$pkg_coverage" = "0" ]; then
-              # Try broader match
-              pkg_base=$(echo "$pkg" | sed 's|/\.\.\.$||')
+              # Try broader match — use parameter expansion instead of sed (SC2001)
+              pkg_base="${pkg%/...}"
               pkg_coverage=$(go tool cover -func=coverage.out 2>/dev/null | grep "${pkg_base}" | awk '{sum+=$NF; n++} END {if(n>0) printf "%.1f", sum/n; else print "0"}' || echo "0")
             fi
 
@@ -374,20 +418,23 @@ jobs:
             fi
           done
 
-          if [ "$all_pass" = false ]; then
+          if [ "$all_pass" = "false" ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "⚠️ Some core packages are below the ${threshold}% coverage threshold." >> "$GITHUB_STEP_SUMMARY"
+            echo "❌ One or more core packages are below the ${threshold}% threshold" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
 
   # ── Test Lint (time.Sleep detection) ────────────────────────────────
   test-lint:
     name: Test Lint
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ inputs.go-version }}
 
