@@ -81,8 +81,6 @@ jobs:
           --health-interval=5s
           --health-timeout=5s
           --health-retries=20
-    env:
-      OCTO_MASTER_KEY: 0123456789abcdef0123456789abcdef
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -91,7 +89,7 @@ jobs:
           go-version: ${{ inputs.go-version }}
 
       - name: Install gotestsum
-        run: go install gotest.tools/gotestsum@latest
+        run: go install gotest.tools/gotestsum@v1.12.0
 
       - name: Install MySQL/Redis client tooling
         run: |
@@ -121,6 +119,17 @@ jobs:
           total_fail=0
           total_skip=0
 
+          # B2: Capture go list output safely; fail if it errors
+          pkg_file="$(mktemp)"
+          if ! go list ./... > "$pkg_file"; then
+            echo "::error::go list ./... failed" >&2
+            exit 1
+          fi
+          if [ ! -s "$pkg_file" ]; then
+            echo "::error::no Go packages found" >&2
+            exit 1
+          fi
+
           while read -r pkg; do
             mysql -h 127.0.0.1 -uroot -pdemo -e \
               "DROP DATABASE IF EXISTS test; CREATE DATABASE test CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
@@ -143,7 +152,8 @@ jobs:
 
             pkg_index=$((pkg_index + 1))
             echo "::endgroup::"
-          done < <(go list ./...)
+          done < "$pkg_file"
+          rm -f "$pkg_file"
 
           # Merge JUnit XMLs using Python (gotestsum has no merge subcommand)
           if compgen -G "junit-*.xml" > /dev/null; then
@@ -180,11 +190,12 @@ jobs:
           PYEOF
           fi
 
-          # Parse test counts from JUnit XML for summary
+          # Parse test counts from JUnit XML for summary (Nit-1: correct Passed count)
           if [ -f junit.xml ]; then
-            total_pass=$(grep -o 'tests="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*' || echo 0)
+            total_tests=$(grep -o 'tests="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*' || echo 0)
             total_fail=$(grep -o 'failures="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*' || echo 0)
             total_skip=$(grep -o 'skipped="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*' || echo 0)
+            total_pass=$((total_tests - total_fail - total_skip))
           fi
 
           {
@@ -252,7 +263,7 @@ jobs:
           go-version: ${{ inputs.go-version }}
 
       - name: Install gotestsum
-        run: go install gotest.tools/gotestsum@latest
+        run: go install gotest.tools/gotestsum@v1.12.0
 
       - name: Run tests
         id: test
@@ -266,10 +277,11 @@ jobs:
                -coverprofile=coverage.out \
                -covermode=atomic ./...
 
-          # Parse test counts
-          total_pass=$(grep -o 'tests="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*' || echo 0)
+          # Parse test counts (Nit-1: correct Passed count)
+          total_tests=$(grep -o 'tests="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*' || echo 0)
           total_fail=$(grep -o 'failures="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*' || echo 0)
           total_skip=$(grep -o 'skipped="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*' || echo 0)
+          total_pass=$((total_tests - total_fail - total_skip))
 
           {
             echo "test_passed=${total_pass}"
@@ -344,19 +356,31 @@ jobs:
           name: test-results
 
       - name: Generate octocov config
+        env:
+          COVERAGE_EXCLUDE: ${{ inputs.coverage-exclude }}
+          COVERAGE_THRESHOLD: ${{ inputs.coverage-threshold }}
         run: |
-          # Build exclude list from comma-separated input
+          # W1: Disable PR comment for fork PRs (token lacks pull-requests: write)
+          IS_FORK="false"
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+            IS_FORK="true"
+          fi
+
+          COMMENT_ENABLE="true"
+          if [ "$IS_FORK" = "true" ]; then
+            COMMENT_ENABLE="false"
+          fi
+
+          # W2: Build exclude list from comma-separated input
           EXCLUDE_YAML=""
-          IFS=',' read -ra PATTERNS <<< "${{ inputs.coverage-exclude }}"
+          IFS=',' read -ra PATTERNS <<< "$COVERAGE_EXCLUDE"
           for p in "${PATTERNS[@]}"; do
             p="${p// /}"
             [ -z "$p" ] && continue
-            # If ends with / (directory), use **/p**; otherwise use **/*p
-            if [[ "$p" == */ ]]; then
-              EXCLUDE_YAML="${EXCLUDE_YAML}    - \"**/${p}**\"\n"
-            else
-              EXCLUDE_YAML="${EXCLUDE_YAML}    - \"**/*${p}\"\n"
-            fi
+            # Directory patterns (vendor, migrations, mock as dir)
+            EXCLUDE_YAML="${EXCLUDE_YAML}    - \"**/${p}/**\"\n"
+            # File suffix patterns (pb.go, _gen.go, _mock.go)
+            EXCLUDE_YAML="${EXCLUDE_YAML}    - \"**/*${p}\"\n"
           done
 
           # Write octocov config with exclude paths
@@ -365,16 +389,16 @@ jobs:
             echo "coverage:"
             echo "  paths:"
             echo "    - coverage.out"
-            echo "  acceptable: ${{ inputs.coverage-threshold }}%"
+            echo "  acceptable: ${COVERAGE_THRESHOLD}%"
             if [ -n "$EXCLUDE_YAML" ]; then
               echo "  exclude:"
               printf '%b' "$EXCLUDE_YAML"
             fi
             echo "diff:"
             echo "  coverage:"
-            echo "    acceptable: ${{ inputs.coverage-threshold }}%"
+            echo "    acceptable: ${COVERAGE_THRESHOLD}%"
             echo "comment:"
-            echo "  enable: true"
+            echo "  enable: $COMMENT_ENABLE"
             echo "  hideFooterLink: false"
             echo "summary:"
             echo "  enable: true"
@@ -388,41 +412,91 @@ jobs:
 
       - name: Core packages coverage check
         if: inputs.core-packages != ''
+        env:
+          CORE_PACKAGES: ${{ inputs.core-packages }}
+          CORE_THRESHOLD: ${{ inputs.core-coverage-threshold }}
         run: |
-          echo "## 📊 Core Packages Coverage" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
+          python3 - <<'PYEOF'
+          import sys, os, subprocess
 
-          IFS=',' read -ra CORE_PKGS <<< "${{ inputs.core-packages }}"
-          threshold=${{ inputs.core-coverage-threshold }}
-          all_pass=true
+          core_pkgs_input = os.environ.get("CORE_PACKAGES", "")
+          threshold = float(os.environ.get("CORE_THRESHOLD", "75"))
+          coverage_file = "coverage.out"
 
-          for pkg in "${CORE_PKGS[@]}"; do
-            pkg=$(echo "$pkg" | xargs)
-            [ -z "$pkg" ] && continue
+          if not core_pkgs_input.strip():
+              sys.exit(0)
 
-            # Extract coverage for this package from coverage.out
-            # Use go tool cover to get the percentage
-            pkg_coverage=$(go tool cover -func=coverage.out 2>/dev/null | grep "^${pkg}" | tail -1 | awk '{print $NF}' | tr -d '%' || echo "0")
+          # Expand each core package pattern using go list
+          core_import_paths = set()
+          for pkg_pattern in core_pkgs_input.split(","):
+              pkg_pattern = pkg_pattern.strip()
+              if not pkg_pattern:
+                  continue
+              result = subprocess.run(
+                  ["go", "list", "-f", "{{.ImportPath}}", pkg_pattern],
+                  capture_output=True, text=True
+              )
+              if result.returncode == 0:
+                  for line in result.stdout.strip().splitlines():
+                      line = line.strip()
+                      if line:
+                          core_import_paths.add(line)
 
-            if [ -z "$pkg_coverage" ] || [ "$pkg_coverage" = "0" ]; then
-              # Try broader match — use parameter expansion instead of sed (SC2001)
-              pkg_base="${pkg%/...}"
-              pkg_coverage=$(go tool cover -func=coverage.out 2>/dev/null | grep "${pkg_base}" | awk '{sum+=$NF; n++} END {if(n>0) printf "%.1f", sum/n; else print "0"}' || echo "0")
-            fi
+          if not core_import_paths:
+              print("Warning: no packages matched core-packages patterns")
+              sys.exit(0)
 
-            if awk "BEGIN {exit !($pkg_coverage < $threshold)}"; then
-              echo "| ❌ | \`$pkg\` | ${pkg_coverage}% | >=${threshold}% |" >> "$GITHUB_STEP_SUMMARY"
-              all_pass=false
-            else
-              echo "| ✅ | \`$pkg\` | ${pkg_coverage}% | >=${threshold}% |" >> "$GITHUB_STEP_SUMMARY"
-            fi
-          done
+          # Parse coverage.out: format is "pkg/path/file.go:start.col,end.col stmts count"
+          total_stmts = 0
+          covered_stmts = 0
 
-          if [ "$all_pass" = "false" ]; then
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "❌ One or more core packages are below the ${threshold}% threshold" >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
+          with open(coverage_file) as f:
+              for line in f:
+                  line = line.strip()
+                  if line.startswith("mode:") or not line:
+                      continue
+                  # e.g. github.com/org/repo/pkg/file.go:10.5,12.10 3 1
+                  try:
+                      file_part, rest = line.rsplit(":", 1)
+                      # file_part is import_path/filename, extract import path (dir)
+                      import_path = "/".join(file_part.split("/")[:-1])
+                      parts = rest.split()
+                      # rest = "10.5,12.10 3 1" -> parts = ["10.5,12.10", "3", "1"]
+                      stmts = int(parts[1]) if len(parts) >= 2 else 0
+                      count = int(parts[2]) if len(parts) >= 3 else 0
+                  except (ValueError, IndexError):
+                      continue
+
+                  if import_path in core_import_paths:
+                      total_stmts += stmts
+                      if count > 0:
+                          covered_stmts += stmts
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stderr")
+
+          with open(summary_path, "a") as f:
+              f.write("## 📊 Core Packages Coverage\n\n")
+              f.write("| Status | Package | Coverage | Required |\n")
+              f.write("|--------|---------|----------|----------|\n")
+
+          if total_stmts == 0:
+              print("Warning: no statements found for core packages — check import paths")
+              with open(summary_path, "a") as f:
+                  f.write("| ⚠️ | (all core packages) | N/A — no statements found | check patterns |\n")
+              sys.exit(0)
+
+          coverage_pct = covered_stmts / total_stmts * 100
+          status = "✅" if coverage_pct >= threshold else "❌"
+
+          with open(summary_path, "a") as f:
+              f.write(f"| {status} | Core packages ({len(core_import_paths)} pkgs) | {coverage_pct:.1f}% | >={threshold:.0f}% |\n")
+
+          print(f"Core coverage: {coverage_pct:.1f}% ({covered_stmts}/{total_stmts} statements), threshold: {threshold}%")
+
+          if coverage_pct < threshold:
+              print(f"::error::Core packages coverage {coverage_pct:.1f}% is below threshold {threshold}%")
+              sys.exit(1)
+          PYEOF
 
   # ── Test Lint (time.Sleep detection) ────────────────────────────────
   test-lint:
@@ -462,3 +536,40 @@ jobs:
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "⚠️ \`time.Sleep\` in tests can cause flakiness. Consider using clock abstractions or polling helpers." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+  # ── Quality Gate (stable required check for branch protection) ──────
+  quality-gate:
+    name: Quality Gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [test-with-services, test-standalone, diff-coverage, test-lint]
+    permissions:
+      contents: read
+    steps:
+      - name: Evaluate results
+        run: |
+          # Determine which test job ran
+          if [ "${{ inputs.services }}" = "true" ]; then
+            test_result="${{ needs.test-with-services.result }}"
+          else
+            test_result="${{ needs.test-standalone.result }}"
+          fi
+
+          echo "test result: $test_result"
+          echo "diff-coverage result: ${{ needs.diff-coverage.result }}"
+
+          if [ "$test_result" != "success" ]; then
+            echo "::error::Test job did not pass (result: $test_result)"
+            exit 1
+          fi
+
+          # diff-coverage only runs on PR; skip check for push events
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            cov_result="${{ needs.diff-coverage.result }}"
+            if [ "$cov_result" != "success" ] && [ "$cov_result" != "skipped" ]; then
+              echo "::error::Diff coverage check did not pass (result: $cov_result)"
+              exit 1
+            fi
+          fi
+
+          echo "✅ All quality gates passed"

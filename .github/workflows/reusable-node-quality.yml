@@ -62,10 +62,19 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
           cache: ${{ inputs.package-manager == 'pnpm' && 'pnpm' || 'npm' }}
+          cache-dependency-path: |
+            ${{ inputs.working-directory }}/pnpm-lock.yaml
+            ${{ inputs.working-directory }}/package-lock.json
 
       - name: Install dependencies
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
         run: |
-          if [ "${{ inputs.package-manager }}" = "pnpm" ]; then
+          case "$PACKAGE_MANAGER" in
+            pnpm|npm) ;;
+            *) echo "::error::unsupported package-manager: $PACKAGE_MANAGER" >&2; exit 2 ;;
+          esac
+          if [ "$PACKAGE_MANAGER" = "pnpm" ]; then
             pnpm install --frozen-lockfile
           else
             npm ci
@@ -95,18 +104,29 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
           cache: ${{ inputs.package-manager == 'pnpm' && 'pnpm' || 'npm' }}
+          cache-dependency-path: |
+            ${{ inputs.working-directory }}/pnpm-lock.yaml
+            ${{ inputs.working-directory }}/package-lock.json
 
       - name: Install dependencies
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
         run: |
-          if [ "${{ inputs.package-manager }}" = "pnpm" ]; then
+          case "$PACKAGE_MANAGER" in
+            pnpm|npm) ;;
+            *) echo "::error::unsupported package-manager: $PACKAGE_MANAGER" >&2; exit 2 ;;
+          esac
+          if [ "$PACKAGE_MANAGER" = "pnpm" ]; then
             pnpm install --frozen-lockfile
           else
             npm ci
           fi
 
       - name: Lint
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
         run: |
-          if [ "${{ inputs.package-manager }}" = "pnpm" ]; then
+          if [ "$PACKAGE_MANAGER" = "pnpm" ]; then
             pnpm lint
           else
             npm run lint
@@ -135,18 +155,29 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
           cache: ${{ inputs.package-manager == 'pnpm' && 'pnpm' || 'npm' }}
+          cache-dependency-path: |
+            ${{ inputs.working-directory }}/pnpm-lock.yaml
+            ${{ inputs.working-directory }}/package-lock.json
 
       - name: Install dependencies
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
         run: |
-          if [ "${{ inputs.package-manager }}" = "pnpm" ]; then
+          case "$PACKAGE_MANAGER" in
+            pnpm|npm) ;;
+            *) echo "::error::unsupported package-manager: $PACKAGE_MANAGER" >&2; exit 2 ;;
+          esac
+          if [ "$PACKAGE_MANAGER" = "pnpm" ]; then
             pnpm install --frozen-lockfile
           else
             npm ci
           fi
 
       - name: Run tests with coverage
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
         run: |
-          if [ "${{ inputs.package-manager }}" = "pnpm" ]; then
+          if [ "$PACKAGE_MANAGER" = "pnpm" ]; then
             pnpm test --coverage
           else
             npm test -- --coverage
@@ -179,19 +210,71 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
           cache: ${{ inputs.package-manager == 'pnpm' && 'pnpm' || 'npm' }}
+          cache-dependency-path: |
+            ${{ inputs.working-directory }}/pnpm-lock.yaml
+            ${{ inputs.working-directory }}/package-lock.json
 
       - name: Install dependencies
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
         run: |
-          if [ "${{ inputs.package-manager }}" = "pnpm" ]; then
+          case "$PACKAGE_MANAGER" in
+            pnpm|npm) ;;
+            *) echo "::error::unsupported package-manager: $PACKAGE_MANAGER" >&2; exit 2 ;;
+          esac
+          if [ "$PACKAGE_MANAGER" = "pnpm" ]; then
             pnpm install --frozen-lockfile
           else
             npm ci
           fi
 
       - name: Build
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
         run: |
-          if [ "${{ inputs.package-manager }}" = "pnpm" ]; then
+          if [ "$PACKAGE_MANAGER" = "pnpm" ]; then
             pnpm build
           else
             npm run build
           fi
+
+  # ── Quality Gate ────────────────────────────────────────────────────
+  quality-gate:
+    name: Quality Gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [typecheck, lint, build, test]
+    permissions:
+      contents: read
+    steps:
+      - name: Evaluate results
+        run: |
+          tc="${{ needs.typecheck.result }}"
+          ln="${{ needs.lint.result }}"
+          bd="${{ needs.build.result }}"
+          ts="${{ needs.test.result }}"
+
+          failed=false
+
+          if [ "$tc" != "success" ]; then
+            echo "::error::typecheck failed (result: $tc)"
+            failed=true
+          fi
+          if [ "$ln" != "success" ]; then
+            echo "::error::lint failed (result: $ln)"
+            failed=true
+          fi
+          if [ "$bd" != "success" ]; then
+            echo "::error::build failed (result: $bd)"
+            failed=true
+          fi
+          # test is optional (has-tests), skipped is ok
+          if [ "$ts" != "success" ] && [ "$ts" != "skipped" ]; then
+            echo "::error::test failed (result: $ts)"
+            failed=true
+          fi
+
+          if [ "$failed" = "true" ]; then
+            exit 1
+          fi
+          echo "✅ All quality gates passed"
