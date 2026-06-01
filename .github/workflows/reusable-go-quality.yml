@@ -1,0 +1,417 @@
+# Reusable workflow: Go Test Quality
+#
+# Provides gotestsum-based testing with JUnit XML + coverage output,
+# diff coverage via octocov, and test lint (time.Sleep detection).
+#
+# Usage:
+#   jobs:
+#     quality:
+#       uses: Mininglamp-OSS/.github/.github/workflows/reusable-go-quality.yml@main
+#       with:
+#         go-version: '1.25.x'
+#         services: true
+#         core-packages: './modules/user/...,./modules/thread/...'
+
+name: Reusable — Go Test Quality
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        description: 'Go version to use'
+        required: true
+        type: string
+      services:
+        description: 'Start MySQL + Redis service containers'
+        required: false
+        type: boolean
+        default: false
+      coverage-threshold:
+        description: 'Overall coverage threshold (%)'
+        required: false
+        type: number
+        default: 60
+      core-packages:
+        description: 'Core package paths (comma-separated, e.g. ./modules/user/...,./modules/thread/...)'
+        required: false
+        type: string
+        default: ''
+      core-coverage-threshold:
+        description: 'Core packages coverage threshold (%)'
+        required: false
+        type: number
+        default: 75
+      coverage-exclude:
+        description: 'Exclude paths from coverage (comma-separated glob fragments)'
+        required: false
+        type: string
+        default: 'mock,pb.go,_gen.go,vendor,migrations'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # ── Test (with MySQL + Redis services) ──────────────────────────────
+  # GitHub Actions does not support conditional `services:` blocks, so we
+  # define two mutually-exclusive test jobs gated by `inputs.services`.
+  test-with-services:
+    if: inputs.services
+    name: Test (services)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: demo
+          MYSQL_DATABASE: test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pdemo"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      OCTO_MASTER_KEY: 0123456789abcdef0123456789abcdef
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@latest
+
+      - name: Install MySQL/Redis client tooling
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mysql-client redis-tools
+
+      - name: Wait for MySQL
+        run: |
+          for _ in $(seq 1 30); do
+            if mysqladmin ping -h 127.0.0.1 -uroot -pdemo --silent; then
+              echo "mysql ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "mysql did not become ready" >&2
+          exit 1
+
+      - name: Run tests (per-package with DB reset)
+        id: test
+        run: |
+          set -euo pipefail
+          fail=0
+          echo "mode: atomic" > coverage.out
+          pkg_index=0
+          total_pass=0
+          total_fail=0
+          total_skip=0
+
+          while read -r pkg; do
+            mysql -h 127.0.0.1 -uroot -pdemo -e \
+              "DROP DATABASE IF EXISTS test; CREATE DATABASE test CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
+            redis-cli -h 127.0.0.1 -p 6379 FLUSHALL >/dev/null
+
+            echo "::group::testing $pkg"
+            if ! gotestsum \
+                --junitfile "junit-${pkg_index}.xml" \
+                --format short-verbose \
+                -- -race -shuffle=on -count=1 -timeout 5m \
+                   -coverprofile="coverage-${pkg_index}.out" \
+                   -covermode=atomic "$pkg"; then
+              fail=1
+            fi
+
+            # Accumulate coverage data (skip mode line from each fragment)
+            if [ -f "coverage-${pkg_index}.out" ]; then
+              grep -v '^mode:' "coverage-${pkg_index}.out" >> coverage.out || true
+            fi
+
+            pkg_index=$((pkg_index + 1))
+            echo "::endgroup::"
+          done < <(go list ./...)
+
+          # Merge JUnit XMLs
+          if compgen -G "junit-*.xml" > /dev/null; then
+            gotestsum tool merge junit-*.xml > junit.xml 2>/dev/null || {
+              # Fallback: use the first available XML
+              first_xml=$(ls junit-*.xml 2>/dev/null | head -1)
+              [ -n "$first_xml" ] && cp "$first_xml" junit.xml
+            }
+          fi
+
+          # Parse test counts from JUnit XML for summary
+          if [ -f junit.xml ]; then
+            total_pass=$(grep -o 'tests="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*' || echo 0)
+            total_fail=$(grep -o 'failures="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*' || echo 0)
+            total_skip=$(grep -o 'skipped="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*' || echo 0)
+          fi
+
+          echo "test_passed=${total_pass}" >> "$GITHUB_OUTPUT"
+          echo "test_failed=${total_fail}" >> "$GITHUB_OUTPUT"
+          echo "test_skipped=${total_skip}" >> "$GITHUB_OUTPUT"
+          echo "test_exit_code=${fail}" >> "$GITHUB_OUTPUT"
+
+          exit $fail
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            junit.xml
+            junit-*.xml
+            coverage.out
+          retention-days: 14
+
+      - name: Write PR summary
+        if: always()
+        run: |
+          passed="${{ steps.test.outputs.test_passed }}"
+          failed="${{ steps.test.outputs.test_failed }}"
+          skipped="${{ steps.test.outputs.test_skipped }}"
+          exit_code="${{ steps.test.outputs.test_exit_code }}"
+
+          if [ "$exit_code" = "0" ]; then
+            verdict="✅ **PASSED**"
+          else
+            verdict="❌ **FAILED**"
+          fi
+
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## 🧪 Test Results
+
+          ${verdict}
+
+          | Metric | Count |
+          |--------|-------|
+          | ✅ Passed | ${passed:-0} |
+          | ❌ Failed | ${failed:-0} |
+          | ⏭️ Skipped | ${skipped:-0} |
+
+          **Flags:** \`-race -shuffle=on\` (services: MySQL + Redis)
+
+          📦 [Download artifacts](../actions/runs/${{ github.run_id }}#artifacts)
+          EOF
+
+  # ── Test (standalone, no services) ──────────────────────────────────
+  test-standalone:
+    if: ${{ !inputs.services }}
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@latest
+
+      - name: Run tests
+        id: test
+        run: |
+          set -euo pipefail
+
+          gotestsum \
+            --junitfile junit.xml \
+            --format short-verbose \
+            -- -race -shuffle=on -count=1 -timeout 5m \
+               -coverprofile=coverage.out \
+               -covermode=atomic ./...
+
+          # Parse test counts
+          total_pass=$(grep -o 'tests="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*' || echo 0)
+          total_fail=$(grep -o 'failures="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*' || echo 0)
+          total_skip=$(grep -o 'skipped="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*' || echo 0)
+
+          echo "test_passed=${total_pass}" >> "$GITHUB_OUTPUT"
+          echo "test_failed=${total_fail}" >> "$GITHUB_OUTPUT"
+          echo "test_skipped=${total_skip}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            junit.xml
+            coverage.out
+          retention-days: 14
+
+      - name: Write PR summary
+        if: always()
+        run: |
+          passed="${{ steps.test.outputs.test_passed }}"
+          failed="${{ steps.test.outputs.test_failed }}"
+          skipped="${{ steps.test.outputs.test_skipped }}"
+          outcome="${{ steps.test.outcome }}"
+
+          if [ "$outcome" = "success" ]; then
+            verdict="✅ **PASSED**"
+          else
+            verdict="❌ **FAILED**"
+          fi
+
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## 🧪 Test Results
+
+          ${verdict}
+
+          | Metric | Count |
+          |--------|-------|
+          | ✅ Passed | ${passed:-0} |
+          | ❌ Failed | ${failed:-0} |
+          | ⏭️ Skipped | ${skipped:-0} |
+
+          **Flags:** \`-race -shuffle=on\`
+
+          📦 [Download artifacts](../actions/runs/${{ github.run_id }}#artifacts)
+          EOF
+
+  # ── Diff Coverage (octocov) ─────────────────────────────────────────
+  diff-coverage:
+    needs: [test-with-services, test-standalone]
+    if: |
+      always() &&
+      github.event_name == 'pull_request' &&
+      (needs.test-with-services.result == 'success' || needs.test-standalone.result == 'success')
+    name: Diff Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      - name: Download test results
+        uses: actions/download-artifact@v4
+        with:
+          name: test-results
+
+      - name: Generate octocov config
+        run: |
+          # Build exclude list from comma-separated input
+          EXCLUDES=""
+          IFS=',' read -ra PARTS <<< "${{ inputs.coverage-exclude }}"
+          for part in "${PARTS[@]}"; do
+            part=$(echo "$part" | xargs)  # trim whitespace
+            if [ -n "$part" ]; then
+              EXCLUDES="${EXCLUDES}    - '**/*${part}*'\n"
+            fi
+          done
+
+          cat > .octocov.yml <<OCTOCOV_EOF
+          # Auto-generated by reusable-go-quality workflow
+          coverage:
+            paths:
+              - coverage.out
+            acceptable: ${{ inputs.coverage-threshold }}
+          diff:
+            coverage:
+              acceptable: ${{ inputs.coverage-threshold }}
+          comment:
+            enable: true
+            hideFooterLink: false
+          summary:
+            enable: true
+          OCTOCOV_EOF
+
+          echo "Generated .octocov.yml:"
+          cat .octocov.yml
+
+      - name: Run octocov
+        uses: k1LoW/octocov-action@v1
+
+      - name: Core packages coverage check
+        if: inputs.core-packages != ''
+        run: |
+          echo "## 📊 Core Packages Coverage" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          IFS=',' read -ra CORE_PKGS <<< "${{ inputs.core-packages }}"
+          threshold=${{ inputs.core-coverage-threshold }}
+          all_pass=true
+
+          for pkg in "${CORE_PKGS[@]}"; do
+            pkg=$(echo "$pkg" | xargs)
+            [ -z "$pkg" ] && continue
+
+            # Extract coverage for this package from coverage.out
+            # Use go tool cover to get the percentage
+            pkg_coverage=$(go tool cover -func=coverage.out 2>/dev/null | grep "^${pkg}" | tail -1 | awk '{print $NF}' | tr -d '%' || echo "0")
+
+            if [ -z "$pkg_coverage" ] || [ "$pkg_coverage" = "0" ]; then
+              # Try broader match
+              pkg_base=$(echo "$pkg" | sed 's|/\.\.\.$||')
+              pkg_coverage=$(go tool cover -func=coverage.out 2>/dev/null | grep "${pkg_base}" | awk '{sum+=$NF; n++} END {if(n>0) printf "%.1f", sum/n; else print "0"}' || echo "0")
+            fi
+
+            if awk "BEGIN {exit !($pkg_coverage < $threshold)}"; then
+              echo "| ❌ | \`$pkg\` | ${pkg_coverage}% | >=${threshold}% |" >> "$GITHUB_STEP_SUMMARY"
+              all_pass=false
+            else
+              echo "| ✅ | \`$pkg\` | ${pkg_coverage}% | >=${threshold}% |" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
+          if [ "$all_pass" = false ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "⚠️ Some core packages are below the ${threshold}% coverage threshold." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # ── Test Lint (time.Sleep detection) ────────────────────────────────
+  test-lint:
+    name: Test Lint
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      - name: Detect time.Sleep in tests
+        run: |
+          echo "## 🔍 Test Lint: time.Sleep Detection" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          found=0
+          while IFS= read -r -d '' file; do
+            matches=$(grep -n 'time\.Sleep' "$file" 2>/dev/null || true)
+            if [ -n "$matches" ]; then
+              found=1
+              echo "::warning file=${file}::time.Sleep detected in test file — consider using a clock abstraction or test helper"
+              echo "- \`${file}\`:" >> "$GITHUB_STEP_SUMMARY"
+              while IFS= read -r line; do
+                echo "  - ${line}" >> "$GITHUB_STEP_SUMMARY"
+              done <<< "$matches"
+            fi
+          done < <(find . -name '*_test.go' -not -path './vendor/*' -print0)
+
+          if [ "$found" -eq 0 ]; then
+            echo "✅ No \`time.Sleep\` found in test files." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "⚠️ \`time.Sleep\` in tests can cause flakiness. Consider using clock abstractions or polling helpers." >> "$GITHUB_STEP_SUMMARY"
+          fi
