@@ -139,7 +139,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
@@ -183,8 +182,37 @@ jobs:
             npm test -- --coverage
           fi
 
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: node-coverage
+          path: |
+            ${{ inputs.working-directory }}/coverage/
+          retention-days: 7
+
+  # ── Coverage Report (separate job with write permissions) ───────────
+  report-coverage:
+    if: inputs.has-tests && github.event_name == 'pull_request'
+    name: Coverage Report
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Download coverage artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: node-coverage
+          path: ${{ inputs.working-directory }}/coverage
+
       - name: Coverage report
-        if: always() && github.event_name == 'pull_request'
         uses: davelosert/vitest-coverage-report-action@02f3c2e641286b7fa308cd3e430783103ce6103b # v2
         with:
           working-directory: ${{ inputs.working-directory }}
@@ -243,34 +271,40 @@ jobs:
     name: Quality Gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [typecheck, lint, build, test]
+    needs: [typecheck, lint, build, test, report-coverage]
     permissions:
       contents: read
     steps:
       - name: Evaluate results
+        env:
+          TYPECHECK_RESULT: ${{ needs.typecheck.result }}
+          LINT_RESULT: ${{ needs.lint.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          COVERAGE_REPORT_RESULT: ${{ needs.report-coverage.result }}
         run: |
-          tc="${{ needs.typecheck.result }}"
-          ln="${{ needs.lint.result }}"
-          bd="${{ needs.build.result }}"
-          ts="${{ needs.test.result }}"
-
           failed=false
 
-          if [ "$tc" != "success" ]; then
-            echo "::error::typecheck failed (result: $tc)"
+          if [ "$TYPECHECK_RESULT" != "success" ]; then
+            echo "::error::typecheck failed (result: $TYPECHECK_RESULT)"
             failed=true
           fi
-          if [ "$ln" != "success" ]; then
-            echo "::error::lint failed (result: $ln)"
+          if [ "$LINT_RESULT" != "success" ]; then
+            echo "::error::lint failed (result: $LINT_RESULT)"
             failed=true
           fi
-          if [ "$bd" != "success" ]; then
-            echo "::error::build failed (result: $bd)"
+          if [ "$BUILD_RESULT" != "success" ]; then
+            echo "::error::build failed (result: $BUILD_RESULT)"
             failed=true
           fi
           # test is optional (has-tests), skipped is ok
-          if [ "$ts" != "success" ] && [ "$ts" != "skipped" ]; then
-            echo "::error::test failed (result: $ts)"
+          if [ "$TEST_RESULT" != "success" ] && [ "$TEST_RESULT" != "skipped" ]; then
+            echo "::error::test failed (result: $TEST_RESULT)"
+            failed=true
+          fi
+          # report-coverage only runs on PRs with has-tests, skipped is ok
+          if [ "$COVERAGE_REPORT_RESULT" != "success" ] && [ "$COVERAGE_REPORT_RESULT" != "skipped" ]; then
+            echo "::error::coverage report failed (result: $COVERAGE_REPORT_RESULT)"
             failed=true
           fi
 

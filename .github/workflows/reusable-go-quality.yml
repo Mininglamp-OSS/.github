@@ -372,15 +372,23 @@ jobs:
           fi
 
           # W2: Build exclude list from comma-separated input
+          # Fragment forms:
+          #   *.go suffix (pb.go, _gen.go) → **/*<fragment>  (filename suffix match)
+          #   bare token  (mock)           → **/<fragment>/** (directory) + **/*<fragment>*.go (filename substring)
+          #   dotted name (foo.bar)        → **/<fragment>/** (directory only)
           EXCLUDE_YAML=""
           IFS=',' read -ra PATTERNS <<< "$COVERAGE_EXCLUDE"
           for p in "${PATTERNS[@]}"; do
             p="${p// /}"
             [ -z "$p" ] && continue
-            # Directory patterns (vendor, migrations, mock as dir)
-            EXCLUDE_YAML="${EXCLUDE_YAML}    - \"**/${p}/**\"\n"
-            # File suffix patterns (pb.go, _gen.go, _mock.go)
-            EXCLUDE_YAML="${EXCLUDE_YAML}    - \"**/*${p}\"\n"
+            if [[ "$p" == *.go ]]; then
+              EXCLUDE_YAML="${EXCLUDE_YAML}    - \"**/*${p}\"\n"
+            elif [[ "$p" != *.* ]]; then
+              EXCLUDE_YAML="${EXCLUDE_YAML}    - \"**/${p}/**\"\n"
+              EXCLUDE_YAML="${EXCLUDE_YAML}    - \"**/*${p}*.go\"\n"
+            else
+              EXCLUDE_YAML="${EXCLUDE_YAML}    - \"**/${p}/**\"\n"
+            fi
           done
 
           # Write octocov config with exclude paths
@@ -547,16 +555,22 @@ jobs:
       contents: read
     steps:
       - name: Evaluate results
+        env:
+          SERVICES: ${{ inputs.services }}
+          TEST_RESULT_WITH_SERVICES: ${{ needs.test-with-services.result }}
+          TEST_RESULT_STANDALONE: ${{ needs.test-standalone.result }}
+          DIFF_COVERAGE_RESULT: ${{ needs.diff-coverage.result }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           # Determine which test job ran
-          if [ "${{ inputs.services }}" = "true" ]; then
-            test_result="${{ needs.test-with-services.result }}"
+          if [ "$SERVICES" = "true" ]; then
+            test_result="$TEST_RESULT_WITH_SERVICES"
           else
-            test_result="${{ needs.test-standalone.result }}"
+            test_result="$TEST_RESULT_STANDALONE"
           fi
 
           echo "test result: $test_result"
-          echo "diff-coverage result: ${{ needs.diff-coverage.result }}"
+          echo "diff-coverage result: $DIFF_COVERAGE_RESULT"
 
           if [ "$test_result" != "success" ]; then
             echo "::error::Test job did not pass (result: $test_result)"
@@ -564,10 +578,9 @@ jobs:
           fi
 
           # diff-coverage only runs on PR; skip check for push events
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            cov_result="${{ needs.diff-coverage.result }}"
-            if [ "$cov_result" != "success" ] && [ "$cov_result" != "skipped" ]; then
-              echo "::error::Diff coverage check did not pass (result: $cov_result)"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            if [ "$DIFF_COVERAGE_RESULT" != "success" ] && [ "$DIFF_COVERAGE_RESULT" != "skipped" ]; then
+              echo "::error::Diff coverage check did not pass (result: $DIFF_COVERAGE_RESULT)"
               exit 1
             fi
           fi
