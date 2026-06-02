@@ -366,11 +366,6 @@ jobs:
             IS_FORK="true"
           fi
 
-          COMMENT_ENABLE="true"
-          if [ "$IS_FORK" = "true" ]; then
-            COMMENT_ENABLE="false"
-          fi
-
           # W2: Build exclude list from comma-separated input
           # Fragment forms:
           #   *.go suffix (pb.go, _gen.go) → **/*<fragment>  (filename suffix match)
@@ -397,20 +392,17 @@ jobs:
             echo "coverage:"
             echo "  paths:"
             echo "    - coverage.out"
-            echo "  acceptable: ${COVERAGE_THRESHOLD}%"
+            echo "  acceptable: \"current >= ${COVERAGE_THRESHOLD} && diff >= 0\""
             if [ -n "$EXCLUDE_YAML" ]; then
               echo "  exclude:"
               printf '%b' "$EXCLUDE_YAML"
             fi
-            echo "diff:"
-            echo "  coverage:"
-            echo "    acceptable: ${COVERAGE_THRESHOLD}%"
             echo "comment:"
-            echo "  enable: $COMMENT_ENABLE"
+            echo "  if: \"is_pull_request && env.IS_FORK != 'true'\""
             echo "  hideFooterLink: false"
-            echo "summary:"
-            echo "  enable: true"
           } > .octocov.yml
+
+          export IS_FORK
 
           echo "Generated .octocov.yml:"
           cat .octocov.yml
@@ -444,15 +436,17 @@ jobs:
                   ["go", "list", "-f", "{{.ImportPath}}", pkg_pattern],
                   capture_output=True, text=True
               )
-              if result.returncode == 0:
-                  for line in result.stdout.strip().splitlines():
-                      line = line.strip()
-                      if line:
-                          core_import_paths.add(line)
+              if result.returncode != 0:
+                  print(f"::error::go list failed for pattern '{pkg_pattern}': {result.stderr.strip()}")
+                  sys.exit(1)
+              for line in result.stdout.strip().splitlines():
+                  line = line.strip()
+                  if line:
+                      core_import_paths.add(line)
 
           if not core_import_paths:
-              print("Warning: no packages matched core-packages patterns")
-              sys.exit(0)
+              print("::error::no packages matched core-packages patterns")
+              sys.exit(1)
 
           # Parse coverage.out: format is "pkg/path/file.go:start.col,end.col stmts count"
           total_stmts = 0
@@ -488,10 +482,10 @@ jobs:
               f.write("|--------|---------|----------|----------|\n")
 
           if total_stmts == 0:
-              print("Warning: no statements found for core packages — check import paths")
+              print("::error::no statements found for core packages — check import paths")
               with open(summary_path, "a") as f:
                   f.write("| ⚠️ | (all core packages) | N/A — no statements found | check patterns |\n")
-              sys.exit(0)
+              sys.exit(1)
 
           coverage_pct = covered_stmts / total_stmts * 100
           status = "✅" if coverage_pct >= threshold else "❌"
