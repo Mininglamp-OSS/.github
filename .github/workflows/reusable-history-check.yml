@@ -1,0 +1,99 @@
+# Reusable workflow: Reject PRs with no common ancestor on the target branch.
+#
+# WHY THIS EXISTS:
+# GitHub's merge UI does not refuse merges of unrelated histories. If a PR
+# is opened from an orphan branch (e.g. `git checkout --orphan` or a
+# re-initialized `.git/`), GitHub will merge it cleanly — but the orphan's
+# root commit gets grafted into the target branch, collapsing `git blame`
+# for every file in that snapshot onto a single commit.
+#
+# This is not a theoretical risk: hermes-agent PR #25045 (May 2026) landed
+# an orphan branch that re-rooted blame on ~1500 files.
+#
+# HOW IT WORKS:
+# Uses `git merge-base` between origin/<target> and HEAD. If there is no
+# common ancestor, the PR is rejected with a clear error message explaining
+# the cause and fix.
+#
+# COST:
+# Requires `fetch-depth: 0` (full clone) — adds ~5-15s on most repos.
+# Acceptable for a check that runs once per PR push.
+#
+# Caller example:
+#
+#   name: History Check
+#   on:
+#     pull_request:
+#       branches: [main]
+#   jobs:
+#     history:
+#       uses: Mininglamp-OSS/.github/.github/workflows/reusable-history-check.yml@main
+#
+name: Reusable — History Check
+
+on:
+  workflow_call:
+    inputs:
+      target-branch:
+        description: >
+          Branch to check common ancestry against.
+          Default: the PR's base branch (github.event.pull_request.base.ref
+          or 'main' as fallback).
+        type: string
+        required: false
+        default: ''
+
+permissions: {}
+
+jobs:
+  check-common-ancestor:
+    name: Common ancestor check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          # Check out the PR branch tip, NOT the merge commit.
+          # pull_request events default to refs/pull/N/merge, whose
+          # parent includes the base branch — making merge-base always
+          # succeed even for orphan branches.
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Reject PRs with no common ancestor
+        env:
+          TARGET: ${{ inputs.target-branch || github.event.pull_request.base.ref || 'main' }}
+        run: |
+          set -euo pipefail
+
+          echo "Checking common ancestor between origin/${TARGET} and HEAD..."
+
+          # git merge-base exits non-zero AND prints nothing when the two
+          # commits share no ancestor. Check both conditions explicitly so
+          # the failure message is clear regardless of which signal fires.
+          if ! BASE=$(git merge-base "origin/${TARGET}" HEAD 2>/dev/null) || [ -z "$BASE" ]; then
+            echo ""
+            echo "::error::This PR has no common ancestor with ${TARGET}."
+            echo ""
+            echo "Your branch's history is disconnected from ${TARGET}. Common causes:"
+            echo "  - the branch was created with 'git checkout --orphan'"
+            echo "  - '.git/' was re-initialized at some point during the work"
+            echo "  - the branch was force-pushed from an unrelated repository"
+            echo ""
+            echo "Merging an unrelated-history PR grafts a parent-less root commit"
+            echo "into ${TARGET} and collapses git blame for every file in that"
+            echo "snapshot."
+            echo ""
+            echo "To fix, rebase your changes onto current ${TARGET}:"
+            echo "  git fetch origin ${TARGET}"
+            echo "  git checkout -b fix-branch origin/${TARGET}"
+            echo "  # re-apply your changes (cherry-pick, copy files, etc.)"
+            echo "  git push -f origin fix-branch"
+            exit 1
+          fi
+
+          echo "::notice::Common ancestor with ${TARGET}: ${BASE}"
