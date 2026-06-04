@@ -1,0 +1,181 @@
+# Reusable workflow: Dockerfile and shell script linting
+#
+# Lints container build inputs: Dockerfile(s) via hadolint and shell scripts
+# under a configurable directory via shellcheck. These catch regressions that
+# behavioral tests cannot — unquoted variable expansions, silently-failing
+# RUN commands, missing apt-get cleanup, etc.
+#
+# Design reference: hermes-agent .github/workflows/docker-lint.yml
+#
+# Usage example (caller workflow):
+#
+#   on:
+#     push:
+#       branches: [main]
+#       paths:
+#         - 'Dockerfile*'
+#         - 'docker/**'
+#         - '.hadolint.yaml'
+#     pull_request:
+#       branches: [main]
+#       paths:
+#         - 'Dockerfile*'
+#         - 'docker/**'
+#         - '.hadolint.yaml'
+#
+#   jobs:
+#     docker-lint:
+#       uses: Mininglamp-OSS/.github/.github/workflows/reusable-docker-lint.yml@main
+#
+# Callers can override inputs for non-standard layouts:
+#
+#   jobs:
+#     docker-lint:
+#       uses: Mininglamp-OSS/.github/.github/workflows/reusable-docker-lint.yml@main
+#       with:
+#         dockerfiles: 'Dockerfile.api Dockerfile.worker'
+#         shell-dir: './scripts'
+#         hadolint-failure-threshold: 'error'
+#
+# SECURITY: This workflow only reads source files. No secrets are required
+# and no code is executed — hadolint parses Dockerfiles statically and
+# shellcheck analyzes shell scripts without running them.
+name: Reusable — Docker Lint
+
+on:
+  workflow_call:
+    inputs:
+      dockerfiles:
+        description: >
+          Space-separated list of Dockerfile paths to lint.
+          Default 'auto' discovers all files matching Dockerfile* at the repo root.
+        type: string
+        required: false
+        default: 'auto'
+      shell-dir:
+        description: >
+          Directory to scan for shell scripts (shellcheck).
+          Set to empty string to skip shellcheck. Default: './docker'
+        type: string
+        required: false
+        default: './docker'
+      hadolint-failure-threshold:
+        description: >
+          Hadolint failure threshold: error, warning, info, style, ignore.
+          Default: warning (same as hermes-agent).
+        type: string
+        required: false
+        default: 'warning'
+      shellcheck-severity:
+        description: >
+          Shellcheck minimum severity: error, warning, info, style.
+          Default: error (avoids false positives from missing sourced files).
+        type: string
+        required: false
+        default: 'error'
+
+permissions: {}
+
+jobs:
+  hadolint:
+    name: Lint Dockerfiles (hadolint)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Discover Dockerfiles
+        id: discover
+        env:
+          INPUT_DOCKERFILES: ${{ inputs.dockerfiles }}
+        run: |
+          set -euo pipefail
+          if [ "$INPUT_DOCKERFILES" = "auto" ]; then
+            # Find all Dockerfile* at repo root (Dockerfile, Dockerfile.api, etc.)
+            files=$(find . -maxdepth 1 -name 'Dockerfile*' -type f | sort | xargs)
+            if [ -z "$files" ]; then
+              echo "No Dockerfile* found at repo root, skipping hadolint."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Discovered: $files"
+            echo "files=$files" >> "$GITHUB_OUTPUT"
+          else
+            echo "files=$INPUT_DOCKERFILES" >> "$GITHUB_OUTPUT"
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Run hadolint
+        if: steps.discover.outputs.skip != 'true'
+        env:
+          FILES: ${{ steps.discover.outputs.files }}
+          THRESHOLD: ${{ inputs.hadolint-failure-threshold }}
+        run: |
+          set -euo pipefail
+
+          # Install hadolint binary (faster than Docker-based action for
+          # multi-file scanning, and allows iterating over discovered files)
+          HADOLINT_VERSION="2.12.0"
+          HADOLINT_SHA256="56de6d5e5ec427e17b74fa48d51271c7fc0d61244bf5c90e828aab8362d55010"
+          curl -sSfL -o hadolint \
+            "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-x86_64"
+          echo "${HADOLINT_SHA256}  hadolint" | sha256sum -c -
+          chmod +x hadolint
+
+          exit_code=0
+          for dockerfile in $FILES; do
+            if [ ! -f "$dockerfile" ]; then
+              echo "::warning::Dockerfile not found: $dockerfile"
+              continue
+            fi
+            echo "--- Linting $dockerfile ---"
+            ./hadolint --failure-threshold "$THRESHOLD" "$dockerfile" || exit_code=$?
+          done
+          exit "$exit_code"
+
+  shellcheck:
+    name: Lint shell scripts (shellcheck)
+    if: inputs.shell-dir != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Check for shell scripts
+        id: check
+        env:
+          SHELL_DIR: ${{ inputs.shell-dir }}
+        run: |
+          set -euo pipefail
+          if [ ! -d "$SHELL_DIR" ]; then
+            echo "Directory $SHELL_DIR does not exist, skipping shellcheck."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Check if any .sh files exist
+          count=$(find "$SHELL_DIR" -name '*.sh' -type f | wc -l)
+          if [ "$count" -eq 0 ]; then
+            echo "No .sh files found in $SHELL_DIR, skipping shellcheck."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Found $count shell script(s) in $SHELL_DIR"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Run shellcheck
+        if: steps.check.outputs.skip != 'true'
+        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38  # v2.0.0
+        env:
+          SHELLCHECK_OPTS: --severity=${{ inputs.shellcheck-severity }}
+        with:
+          scandir: ${{ inputs.shell-dir }}
