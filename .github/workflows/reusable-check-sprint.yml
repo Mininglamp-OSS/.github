@@ -254,10 +254,13 @@ jobs:
           # (missing Sprint field, no active iteration, insufficient token
           # scopes, etc.).
           #
-          # MERGEABLE GATE: PRs with merge conflicts (CONFLICTING) are skipped
-          # because they cannot be merged regardless of Sprint status. This
-          # avoids wasting Sprint check time and surfacing confusing Sprint
-          # errors when the developer needs to resolve conflicts first.
+          # MERGEABLE GATE: PRs with merge conflicts (CONFLICTING) are rejected
+          # with exit 1 rather than skipped with exit 0. While GitHub itself
+          # blocks the merge button for conflicting PRs, an exit-0 skip would
+          # leave a stale green check that persists after the base branch moves
+          # and the conflict is resolved — potentially bypassing Sprint
+          # validation. A red check (exit 1) ensures the developer must push
+          # (resolving conflicts) which re-triggers this check fresh.
           # GitHub's mergeable field is computed asynchronously; UNKNOWN is
           # retried up to 3 times with a 2-second delay.
           #
@@ -295,6 +298,17 @@ jobs:
                         f"Detail: {e}")
                   sys.exit(1)
 
+              # Draft check first: skip immediately without waiting for
+              # mergeable retries — a draft PR does not need Sprint validation.
+              if is_draft:
+                  print("✅ Skipping Sprint check for draft PR.")
+                  print("::notice::Draft PR detected. Sprint check skipped (exit 0).")
+                  print("::notice::REQUIRED caller config: include `ready_for_review` "
+                        "in `pull_request_target.types`. Without it, this green "
+                        "result is cached on the draft SHA and persists after the "
+                        "PR is marked ready, bypassing the Sprint gate.")
+                  sys.exit(0)
+
               if mergeable_state != "UNKNOWN" or mergeable_attempt == MERGEABLE_MAX_RETRIES:
                   break
               print(f"Mergeable status is UNKNOWN "
@@ -302,21 +316,10 @@ jobs:
                     f"retrying in {MERGEABLE_RETRY_DELAY}s...")
               time.sleep(MERGEABLE_RETRY_DELAY)
 
-          if is_draft:
-              print("✅ Skipping Sprint check for draft PR.")
-              print("::notice::Draft PR detected. Sprint check skipped (exit 0).")
-              print("::notice::REQUIRED caller config: include `ready_for_review` "
-                    "in `pull_request_target.types`. Without it, this green "
-                    "result is cached on the draft SHA and persists after the "
-                    "PR is marked ready, bypassing the Sprint gate.")
-              sys.exit(0)
-
           if mergeable_state == "CONFLICTING":
-              print("✅ Skipping Sprint check — PR has merge conflicts.")
-              print("::notice::PR has merge conflicts (CONFLICTING). "
-                    "Sprint check skipped. Resolve conflicts first, then "
-                    "push to re-trigger this check.")
-              sys.exit(0)
+              print("::error::PR has merge conflicts. "
+                    "Resolve conflicts and push to re-trigger this check.")
+              sys.exit(1)
 
           if mergeable_state == "UNKNOWN":
               print(f"::warning::PR mergeable status is still UNKNOWN after "
