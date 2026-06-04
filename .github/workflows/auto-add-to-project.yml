@@ -123,6 +123,7 @@ jobs:
               'octo-cli':              'cli',
               'octo-daemon-cli':       'cli',
               'octo-deployment':       'deployment',
+              'octo-fleet':            'server',
               'octo-im':               'server',
               'octo-ios':              'ios',
               'octo-lib':              'lib',
