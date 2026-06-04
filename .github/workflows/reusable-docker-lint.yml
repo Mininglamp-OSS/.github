@@ -97,7 +97,8 @@ jobs:
           set -euo pipefail
           if [ "$INPUT_DOCKERFILES" = "auto" ]; then
             # Find all Dockerfile* at repo root (Dockerfile, Dockerfile.api, etc.)
-            files=$(find . -maxdepth 1 -name 'Dockerfile*' -type f | sort | tr '\n' ' ')
+            files=$(find . -maxdepth 1 -name 'Dockerfile*' -type f | sort | tr '
+' ' ')
             if [ -z "$files" ]; then
               echo "No Dockerfile* found at repo root, skipping hadolint."
               echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -121,7 +122,7 @@ jobs:
           # Install hadolint binary (faster than Docker-based action for
           # multi-file scanning, and allows iterating over discovered files)
           HADOLINT_VERSION="2.12.0"
-          HADOLINT_SHA256="56de6d5e5ec427e17b74f2571db532d90b207c68ba59b39e4b2e46b59f625a13"
+          HADOLINT_SHA256="56de6d5e5ec427e17b74fa48d51271c7fc0d61244bf5c90e828aab8362d55010"
           curl -sSfL -o hadolint \
             "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-x86_64"
           echo "${HADOLINT_SHA256}  hadolint" | sha256sum -c -
