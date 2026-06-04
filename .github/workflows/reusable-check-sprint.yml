@@ -247,11 +247,19 @@ jobs:
               return datetime.now(ZoneInfo("Asia/Shanghai")).date()
 
 
-          # --- Step 0: Skip draft PRs before any board-state queries ---------------
+          # --- Step 0: Skip draft PRs and non-mergeable PRs -----------------------
           #
-          # This must run BEFORE Step 1 (sprint resolution) so draft PRs are never
-          # blocked by board-health failures (missing Sprint field, no active
-          # iteration, insufficient token scopes, etc.).
+          # This must run BEFORE Step 1 (sprint resolution) so draft PRs and
+          # PRs with merge conflicts are never blocked by board-health failures
+          # (missing Sprint field, no active iteration, insufficient token
+          # scopes, etc.).
+          #
+          # MERGEABLE GATE: PRs with merge conflicts (CONFLICTING) are skipped
+          # because they cannot be merged regardless of Sprint status. This
+          # avoids wasting Sprint check time and surfacing confusing Sprint
+          # errors when the developer needs to resolve conflicts first.
+          # GitHub's mergeable field is computed asynchronously; UNKNOWN is
+          # retried up to 3 times with a 2-second delay.
           #
           # NOTE: Callers must include `ready_for_review` in their pull_request_target
           # types to ensure this check re-evaluates when a draft PR is marked ready
@@ -260,25 +268,39 @@ jobs:
           # merge without Sprint validation.
           # See: https://github.com/Mininglamp-OSS/.github/pull/51
 
-          draft_data = graphql(
-              """
-              query($owner: String!, $name: String!, $number: Int!) {
-                repository(owner: $owner, name: $name) {
-                  pullRequest(number: $number) {
-                    isDraft
-                  }
-                }
-              }
-              """,
-              variables={"owner": REPO_OWNER, "name": REPO_SHORT, "number": PR_NUMBER},
-          )
+          MERGEABLE_MAX_RETRIES = 3
+          MERGEABLE_RETRY_DELAY = 2  # seconds
 
-          try:
-              is_draft = draft_data["repository"]["pullRequest"]["isDraft"]
-          except (KeyError, TypeError) as e:
-              print(f"::error::Failed to read PR draft status for #{PR_NUMBER}. "
-                    f"Detail: {e}")
-              sys.exit(1)
+          for mergeable_attempt in range(MERGEABLE_MAX_RETRIES + 1):
+              preflight_data = graphql(
+                  """
+                  query($owner: String!, $name: String!, $number: Int!) {
+                    repository(owner: $owner, name: $name) {
+                      pullRequest(number: $number) {
+                        isDraft
+                        mergeable
+                      }
+                    }
+                  }
+                  """,
+                  variables={"owner": REPO_OWNER, "name": REPO_SHORT, "number": PR_NUMBER},
+              )
+
+              try:
+                  pr_preflight = preflight_data["repository"]["pullRequest"]
+                  is_draft = pr_preflight["isDraft"]
+                  mergeable_state = pr_preflight["mergeable"]
+              except (KeyError, TypeError) as e:
+                  print(f"::error::Failed to read PR status for #{PR_NUMBER}. "
+                        f"Detail: {e}")
+                  sys.exit(1)
+
+              if mergeable_state != "UNKNOWN" or mergeable_attempt == MERGEABLE_MAX_RETRIES:
+                  break
+              print(f"Mergeable status is UNKNOWN "
+                    f"(attempt {mergeable_attempt + 1}/{MERGEABLE_MAX_RETRIES}), "
+                    f"retrying in {MERGEABLE_RETRY_DELAY}s...")
+              time.sleep(MERGEABLE_RETRY_DELAY)
 
           if is_draft:
               print("✅ Skipping Sprint check for draft PR.")
@@ -288,6 +310,18 @@ jobs:
                     "result is cached on the draft SHA and persists after the "
                     "PR is marked ready, bypassing the Sprint gate.")
               sys.exit(0)
+
+          if mergeable_state == "CONFLICTING":
+              print("✅ Skipping Sprint check — PR has merge conflicts.")
+              print("::notice::PR has merge conflicts (CONFLICTING). "
+                    "Sprint check skipped. Resolve conflicts first, then "
+                    "push to re-trigger this check.")
+              sys.exit(0)
+
+          if mergeable_state == "UNKNOWN":
+              print(f"::warning::PR mergeable status is still UNKNOWN after "
+                    f"{MERGEABLE_MAX_RETRIES} retries. "
+                    f"Proceeding with Sprint check anyway.")
 
           # --- Step 1: Determine the current sprint iteration -----------------------
 
