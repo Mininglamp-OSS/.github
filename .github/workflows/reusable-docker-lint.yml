@@ -97,8 +97,7 @@ jobs:
           set -euo pipefail
           if [ "$INPUT_DOCKERFILES" = "auto" ]; then
             # Find all Dockerfile* at repo root (Dockerfile, Dockerfile.api, etc.)
-            files=$(find . -maxdepth 1 -name 'Dockerfile*' -type f | sort | tr '
-' ' ')
+            files=$(find . -maxdepth 1 -name 'Dockerfile*' -type f | sort | xargs)
             if [ -z "$files" ]; then
               echo "No Dockerfile* found at repo root, skipping hadolint."
               echo "skip=true" >> "$GITHUB_OUTPUT"
