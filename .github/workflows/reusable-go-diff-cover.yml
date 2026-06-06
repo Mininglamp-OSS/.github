@@ -1,0 +1,255 @@
+# Reusable workflow: Go Diff Coverage
+#
+# Computes true patch (changed-lines) coverage for Go pull requests using:
+#   - gocover-cobertura  Go cover.out → Cobertura XML
+#                        https://github.com/boumenot/gocover-cobertura
+#   - diff-cover         Cobertura XML × `git diff origin/<base>..HEAD`
+#                        → markdown/html report + fail-under gate
+#                        https://github.com/Bachmann1234/diff_cover
+#   - sticky-pull-request-comment  Idempotent PR comment
+#                        https://github.com/marocchino/sticky-pull-request-comment
+#
+# Stateless per-PR: no baseline storage required. diff-cover reports the
+# percentage of *changed* lines covered by tests (industry-standard "patch
+# coverage" used by Codecov / SonarQube). This is structurally different
+# from octocov's "diff" (delta vs baseline), which gave the previous
+# attempt false signal — see Mininglamp-OSS/.github#55 review chain
+# (yujiawei R3 / Jerry-Xin R5) for the schema-misread post-mortem.
+#
+# Usage (consumer side, 5 lines after the test job):
+#
+#   diff-coverage:
+#     needs: [test]
+#     if: github.event_name == 'pull_request' && needs.test.result == 'success'
+#     uses: Mininglamp-OSS/.github/.github/workflows/reusable-go-diff-cover.yml@main
+#     with:
+#       go-version: '1.25.x'
+#
+# Consumer prerequisite: the upstream test job must upload an artifact
+# (default name `test-results`) containing a `cover.out` produced by
+# `go test -coverprofile=cover.out -covermode=atomic ./...`.
+
+name: Reusable — Go Diff Coverage
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        description: 'Go version for consumer module resolution (matches the test job).'
+        required: true
+        type: string
+      diff-coverage-threshold:
+        description: |
+          Percentage threshold for changed-lines coverage (0-100).
+          diff-cover --fail-under: job fails when patch coverage is below this value.
+          Default 80 matches industry-standard patch-coverage gates (Codecov / SonarQube).
+        required: false
+        type: number
+        default: 80
+      compare-branch:
+        description: 'Base branch ref for `git diff` (default origin/main).'
+        required: false
+        type: string
+        default: 'origin/main'
+      coverage-artifact-name:
+        description: 'Artifact name produced by the upstream test job (must contain cover.out).'
+        required: false
+        type: string
+        default: 'test-results'
+      coverage-exclude-dirs:
+        description: |
+          Regular expression of import paths to exclude from cobertura conversion.
+          Passed to `gocover-cobertura -ignore-dirs`. Matches against full directory
+          import paths (e.g. github.com/org/repo/internal/mock).
+        required: false
+        type: string
+        default: '(vendor|mocks?|_mock|migrations)'
+      working-directory:
+        description: |
+          Directory containing go.mod. gocover-cobertura MUST run from the
+          go.mod directory per upstream README §Usage — running from a
+          subdirectory or repo root in a multi-module layout produces empty
+          XML and is flagged as a fail-closed error.
+        required: false
+        type: string
+        default: '.'
+
+permissions: {}
+
+jobs:
+  diff-coverage:
+    name: Diff Coverage
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      # Required so sticky-pull-request-comment can post on same-repo PRs.
+      # Fork PRs receive a read-only GITHUB_TOKEN regardless of this
+      # declaration; the comment step is gated by env.IS_FORK to skip on forks.
+      pull-requests: write
+    env:
+      # Job-level IS_FORK matches the .github#55 R6 pattern: expression is
+      # evaluated once at job start and exposed to every step via the
+      # environment, so child steps and downstream actions see the same
+      # value. Computing this inline in a shell `export` only exposes it to
+      # that shell process (the original .github#55 R5 trap).
+      IS_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # diff-cover needs full history to compute `git diff <base>..HEAD`.
+          # The default fetch-depth: 1 leaves origin/<base> ref absent.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Consumer-Go setup: matches the upstream test job's runtime so
+      # `go list` / module resolution in `gocover-cobertura` line up with
+      # what the test step actually compiled against.
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      # Dedicated tools-toolchain Go: gocover-cobertura v1.5.0 declares
+      # `go 1.25.0` in its go.mod, so consumers on older Go (octo-lib at
+      # 1.20, for example) cannot install it under their own toolchain.
+      # Decouple by setting up Go 1.25.x just to compile the tool, install
+      # the binary to $GOPATH/bin (which is independent of the active
+      # toolchain), then restore the consumer Go for any later steps.
+      #
+      # Source-of-truth: https://github.com/boumenot/gocover-cobertura/blob/v1.5.0/go.mod
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.25.x'
+
+      - name: Install gocover-cobertura (v1.5.0)
+        # v1.5.0 commit SHA verified via:
+        #   gh api repos/boumenot/gocover-cobertura/git/refs/tags/v1.5.0
+        run: |
+          go install github.com/boumenot/gocover-cobertura@4afa1205ab3b54ae098dd4724c1657aad10f7484
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      # Restore consumer Go as the active toolchain. The installed
+      # gocover-cobertura binary in $GOPATH/bin is unaffected — it carries
+      # its own runtime — but consumer-side `go list` resolution must use
+      # the consumer's declared go-version.
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5
+        with:
+          python-version: '3.12'
+
+      - name: Install diff-cover (10.3.0)
+        # Pinned to current latest stable; 10.x raised Python floor to 3.10
+        # which is satisfied by our setup-python 3.12 above.
+        # Source-of-truth: https://pypi.org/pypi/diff-cover/json (info.version)
+        run: pip install --no-cache-dir 'diff-cover==10.3.0'
+
+      - name: Download coverage artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ inputs.coverage-artifact-name }}
+          path: ${{ inputs.working-directory }}
+
+      - name: Fetch base branch for diff
+        # actions/checkout fetch-depth:0 brings all history of the PR head,
+        # but the `origin/<base>` ref may still need an explicit refresh
+        # for PRs whose base advanced after checkout. Use a fast --depth=1
+        # update since diff-cover only needs the tip of <base> for diff.
+        env:
+          COMPARE_BRANCH: ${{ inputs.compare-branch }}
+        run: |
+          set -euo pipefail
+          base="${COMPARE_BRANCH#origin/}"
+          git fetch --no-tags --depth=1 origin "+refs/heads/${base}:refs/remotes/origin/${base}"
+
+      - name: Convert Go coverage to Cobertura XML
+        env:
+          IGNORE_DIRS: ${{ inputs.coverage-exclude-dirs }}
+        run: |
+          set -euo pipefail
+          if [ ! -f cover.out ]; then
+            echo "::error::cover.out not found in $(pwd) after artifact download. Ensure the upstream test job uploads it under the artifact name passed via coverage-artifact-name (default: test-results)." >&2
+            exit 1
+          fi
+          # gocover-cobertura MUST run from the go.mod directory per
+          # upstream README §Usage: "Note that you should run this from
+          # the directory which holds your go.mod file." Running elsewhere
+          # produces empty XML.
+          gocover-cobertura -ignore-gen-files -ignore-dirs "$IGNORE_DIRS" < cover.out > coverage.xml
+          if [ ! -s coverage.xml ]; then
+            echo "::error::coverage.xml is empty after gocover-cobertura conversion. Check that cover.out is non-empty and the workflow's working-directory is the go.mod directory." >&2
+            exit 1
+          fi
+          echo "Generated coverage.xml: $(wc -l < coverage.xml) lines"
+
+      - name: Run diff-cover
+        id: diff
+        env:
+          THRESHOLD: ${{ inputs.diff-coverage-threshold }}
+          COMPARE_BRANCH: ${{ inputs.compare-branch }}
+        # Defer the fail-under exit code to the dedicated gate step below
+        # so subsequent steps (artifact upload, summary, sticky comment)
+        # still run even when diff coverage falls short.
+        run: |
+          set +e
+          diff-cover coverage.xml \
+            --compare-branch="$COMPARE_BRANCH" \
+            --fail-under="$THRESHOLD" \
+            --format markdown:diff-cover.md \
+            --format html:diff-cover.html
+          status=$?
+          set -e
+          echo "diff_status=${status}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload diff-cover reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: diff-cover-report
+          path: |
+            ${{ inputs.working-directory }}/diff-cover.md
+            ${{ inputs.working-directory }}/diff-cover.html
+            ${{ inputs.working-directory }}/coverage.xml
+          retention-days: 14
+
+      - name: Write PR summary
+        if: always()
+        run: |
+          {
+            echo "## 📈 Diff Coverage Report"
+            echo
+            if [ -f diff-cover.md ]; then
+              cat diff-cover.md
+            else
+              echo "_diff-cover did not produce a report (likely no changed lines in covered files)._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post sticky PR comment
+        # Fork PRs receive a read-only GITHUB_TOKEN; the action would 403
+        # trying to post and fail the job. The summary is still written
+        # to GITHUB_STEP_SUMMARY above and uploaded as an artifact, so
+        # fork contributors lose nothing actionable by skipping the comment.
+        if: env.IS_FORK != 'true' && hashFiles(format('{0}/diff-cover.md', inputs.working-directory)) != ''
+        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
+        with:
+          header: diff-coverage
+          path: ${{ inputs.working-directory }}/diff-cover.md
+
+      - name: Coverage gate
+        # Final fail-closed step: surface the threshold violation as the
+        # job's exit status so branch-protection picks it up as required.
+        env:
+          DIFF_STATUS: ${{ steps.diff.outputs.diff_status }}
+          THRESHOLD: ${{ inputs.diff-coverage-threshold }}
+        run: |
+          if [ "$DIFF_STATUS" != "0" ]; then
+            echo "::error::diff-cover failed: changed-lines coverage below threshold ${THRESHOLD}% (see PR summary or diff-cover.md artifact)."
+            exit "$DIFF_STATUS"
+          fi
+          echo "✅ Diff coverage gate passed (threshold ${THRESHOLD}%)"
