@@ -56,11 +56,38 @@ on:
         required: false
         type: string
         default: 'test-results'
+      coverage-file-name:
+        description: |
+          Name of the Go coverage profile file produced by the upstream test
+          job (the `-coverprofile=<file>` argument to `go test`). Default
+          matches the most common pattern across Mininglamp-OSS Go
+          repositories; override if your test job uses a different name
+          (e.g. `cover.out`).
+        required: false
+        type: string
+        default: 'coverage.out'
       coverage-exclude-dirs:
         description: |
-          Regular expression of import paths to exclude from cobertura conversion.
-          Passed to `gocover-cobertura -ignore-dirs`. Matches against full directory
-          import paths (e.g. github.com/org/repo/internal/mock).
+          Regular expression of import paths to exclude from cobertura
+          conversion. Passed to `gocover-cobertura -ignore-dirs`. Matches
+          against full directory import paths (e.g.
+          github.com/org/repo/internal/mock).
+
+          Default is intentionally narrower than the Phase 1
+          `reusable-go-quality.yml` coverage-exclude (which had
+          `mock,pb.go,_gen.go,vendor,migrations`) because:
+
+          1. gocover-cobertura already applies `-ignore-gen-files`
+             (enabled in this workflow), which strips most pb.go /
+             _gen.go files via the `genCodeRe` regexp in ignore.go.
+          2. diff-cover scopes to changed lines only — excluded
+             non-source files rarely show up in PR diffs anyway.
+          3. Keeping the default lean reduces the chance of
+             accidentally excluding legitimate source paths whose
+             names happen to match the broader pattern (e.g. an
+             `internal/migrations` package that contains real logic).
+
+          Add repo-specific exclusions via this input when needed.
         required: false
         type: string
         default: '(vendor|mocks?|_mock|migrations)'
@@ -139,7 +166,7 @@ jobs:
         with:
           go-version: ${{ inputs.go-version }}
 
-      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
 
@@ -170,22 +197,23 @@ jobs:
       - name: Convert Go coverage to Cobertura XML
         env:
           IGNORE_DIRS: ${{ inputs.coverage-exclude-dirs }}
+          COVERAGE_FILE: ${{ inputs.coverage-file-name }}
         run: |
           set -euo pipefail
-          if [ ! -f cover.out ]; then
-            echo "::error::cover.out not found in $(pwd) after artifact download. Ensure the upstream test job uploads it under the artifact name passed via coverage-artifact-name (default: test-results)." >&2
+          if [ ! -f "$COVERAGE_FILE" ]; then
+            echo "::error::${COVERAGE_FILE} not found in $(pwd) after artifact download. Ensure the upstream test job uploads it under the artifact name passed via coverage-artifact-name (default: test-results), and that the file name matches coverage-file-name (default: coverage.out)." >&2
             exit 1
           fi
           # gocover-cobertura MUST run from the go.mod directory per
           # upstream README §Usage: "Note that you should run this from
           # the directory which holds your go.mod file." Running elsewhere
           # produces empty XML.
-          gocover-cobertura -ignore-gen-files -ignore-dirs "$IGNORE_DIRS" < cover.out > coverage.xml
+          gocover-cobertura -ignore-gen-files -ignore-dirs "$IGNORE_DIRS" < "$COVERAGE_FILE" > coverage.xml
           if [ ! -s coverage.xml ]; then
-            echo "::error::coverage.xml is empty after gocover-cobertura conversion. Check that cover.out is non-empty and the workflow's working-directory is the go.mod directory." >&2
+            echo "::error::coverage.xml is empty after gocover-cobertura conversion. Check that ${COVERAGE_FILE} is non-empty and the workflow's working-directory is the go.mod directory." >&2
             exit 1
           fi
-          echo "Generated coverage.xml: $(wc -l < coverage.xml) lines"
+          echo "Generated coverage.xml from ${COVERAGE_FILE}: $(wc -l < coverage.xml) lines"
 
       - name: Run diff-cover
         id: diff
@@ -219,14 +247,38 @@ jobs:
 
       - name: Write PR summary
         if: always()
+        # GitHub Actions caps $GITHUB_STEP_SUMMARY at 1 MiB per step. The
+        # diff-cover markdown report can exceed that on large PRs with many
+        # uncovered changed lines; truncate to a head + tail excerpt with a
+        # safe margin (900 KiB) so the summary itself never fails the step,
+        # and direct the reader to the full report artifact when truncated.
         run: |
+          set -euo pipefail
+          summary_max=921600  # 900 KiB; well under the 1 MiB GitHub limit
           {
             echo "## 📈 Diff Coverage Report"
             echo
-            if [ -f diff-cover.md ]; then
+            if [ ! -f diff-cover.md ]; then
+              echo "_diff-cover did not produce a report (likely no changed lines in covered files)._"
+            elif [ "$(wc -c < diff-cover.md)" -le "$summary_max" ]; then
               cat diff-cover.md
             else
-              echo "_diff-cover did not produce a report (likely no changed lines in covered files)._"
+              size=$(wc -c < diff-cover.md)
+              echo "_diff-cover.md is ${size} bytes (> ${summary_max} byte step-summary safety margin); showing head + tail. Full report in the \`diff-cover-report\` artifact._"
+              echo
+              echo '<details><summary>Report excerpt (head 200 lines)</summary>'
+              echo
+              echo '```markdown'
+              head -n 200 diff-cover.md
+              echo '```'
+              echo '</details>'
+              echo
+              echo '<details><summary>Report excerpt (tail 50 lines)</summary>'
+              echo
+              echo '```markdown'
+              tail -n 50 diff-cover.md
+              echo '```'
+              echo '</details>'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
