@@ -1,7 +1,7 @@
 # Reusable workflow: Go Diff Coverage
 #
 # Computes true patch (changed-lines) coverage for Go pull requests using:
-#   - gocover-cobertura  Go cover.out → Cobertura XML
+#   - gocover-cobertura  Go coverage.out → Cobertura XML
 #                        https://github.com/boumenot/gocover-cobertura
 #   - diff-cover         Cobertura XML × `git diff origin/<base>..HEAD`
 #                        → markdown/html report + fail-under gate
@@ -26,8 +26,8 @@
 #       go-version: '1.25.x'
 #
 # Consumer prerequisite: the upstream test job must upload an artifact
-# (default name `test-results`) containing a `cover.out` produced by
-# `go test -coverprofile=cover.out -covermode=atomic ./...`.
+# (default name `test-results`) containing a `coverage.out` produced by
+# `go test -coverprofile=coverage.out -covermode=atomic ./...`.
 
 name: Reusable — Go Diff Coverage
 
@@ -183,16 +183,19 @@ jobs:
           path: ${{ inputs.working-directory }}
 
       - name: Fetch base branch for diff
-        # actions/checkout fetch-depth:0 brings all history of the PR head,
+        # actions/checkout fetch-depth:0 brings full history of the PR head,
         # but the `origin/<base>` ref may still need an explicit refresh
-        # for PRs whose base advanced after checkout. Use a fast --depth=1
-        # update since diff-cover only needs the tip of <base> for diff.
+        # for PRs whose base advanced after checkout. Fetch the full base
+        # ref (no --depth=1) so diff-cover's default three-dot range
+        # `origin/<base>...HEAD` can resolve the merge-base — a shallow
+        # fetch would graft a `.git/shallow` boundary and break merge-base
+        # lookup whenever the PR branch is behind base (yujiawei R-d151355).
         env:
           COMPARE_BRANCH: ${{ inputs.compare-branch }}
         run: |
           set -euo pipefail
           base="${COMPARE_BRANCH#origin/}"
-          git fetch --no-tags --depth=1 origin "+refs/heads/${base}:refs/remotes/origin/${base}"
+          git fetch --no-tags origin "+refs/heads/${base}:refs/remotes/origin/${base}"
 
       - name: Convert Go coverage to Cobertura XML
         env:
