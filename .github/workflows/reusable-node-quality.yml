@@ -80,8 +80,36 @@ jobs:
             npm ci
           fi
 
-      - name: Type check
-        run: npx tsc --noEmit
+      - name: Type check (script or tsc fallback)
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
+        run: |
+          # Detect consumer-defined `typecheck` script and prefer it over the
+          # bare `tsc --noEmit` fallback. Monorepos (turbo/nx/lerna) without a
+          # root tsconfig.json cannot use the bare fallback (`tsc` with no
+          # tsconfig and no inputs exits 1), so they must opt in by defining
+          # a root `typecheck` script that delegates to per-package tsc runs.
+          #
+          # Single-tsconfig projects keep the existing behavior automatically:
+          # no `typecheck` script => fall back to `npx tsc --noEmit`.
+          #
+          # Refs: octo-web#186 review (yujiawei P1#2, 2026-06-06).
+          if [ ! -f package.json ]; then
+            echo "::error::package.json not found in ${{ inputs.working-directory }}" >&2
+            exit 1
+          fi
+          PM_TYPECHECK=$(node -e "try{const s=require('./package.json').scripts||{};process.stdout.write(s.typecheck||'')}catch(e){}")
+          if [ -n "$PM_TYPECHECK" ]; then
+            echo "Using consumer-defined typecheck script: $PM_TYPECHECK"
+            if [ "$PACKAGE_MANAGER" = "pnpm" ]; then
+              pnpm typecheck
+            else
+              npm run typecheck
+            fi
+          else
+            echo "No 'typecheck' script defined; falling back to 'npx tsc --noEmit'."
+            npx tsc --noEmit
+          fi
 
   # ── Lint ────────────────────────────────────────────────────────────
   lint:
@@ -122,14 +150,32 @@ jobs:
             npm ci
           fi
 
-      - name: Lint
+      - name: Lint (script or skip)
         env:
           PACKAGE_MANAGER: ${{ inputs.package-manager }}
         run: |
-          if [ "$PACKAGE_MANAGER" = "pnpm" ]; then
-            pnpm lint
+          # Lint vs typecheck asymmetry: tsc is the canonical TS implementation
+          # and is safe to invoke bare on TS projects, but lint tooling is
+          # fragmented (eslint v8/v9 flat-config, biome, oxlint, dprint), so
+          # there is no equivalent safe bare fallback. When a consumer has not
+          # defined a `lint` script, emit a workflow warning and skip rather
+          # than fail or auto-install eslint with an unrelated config.
+          #
+          # Refs: octo-web#186 review (yujiawei P1#2, 2026-06-06).
+          if [ ! -f package.json ]; then
+            echo "::error::package.json not found in ${{ inputs.working-directory }}" >&2
+            exit 1
+          fi
+          PM_LINT=$(node -e "try{const s=require('./package.json').scripts||{};process.stdout.write(s.lint||'')}catch(e){}")
+          if [ -n "$PM_LINT" ]; then
+            echo "Using consumer-defined lint script: $PM_LINT"
+            if [ "$PACKAGE_MANAGER" = "pnpm" ]; then
+              pnpm lint
+            else
+              npm run lint
+            fi
           else
-            npm run lint
+            echo "::warning::No 'lint' script defined in package.json — skipping lint step. Add a 'lint' script to enable linting via this reusable workflow."
           fi
 
   # ── Test (only when has-tests is true) ──────────────────────────────
