@@ -340,7 +340,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # Fork PRs receive a read-only GITHUB_TOKEN regardless of this declaration;
+      # the PR-comment step is gated by env.IS_FORK so octocov skips the comment on forks.
       pull-requests: write
+    env:
+      # Persist fork detection at job level so every step (including the
+      # k1LoW/octocov-action invocation) sees env.IS_FORK. Computing this in a
+      # single shell step and `export`-ing it only made it visible to that step.
+      IS_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -359,13 +366,10 @@ jobs:
         env:
           COVERAGE_EXCLUDE: ${{ inputs.coverage-exclude }}
           COVERAGE_THRESHOLD: ${{ inputs.coverage-threshold }}
+          # IS_FORK is already exported at job level (see jobs.diff-coverage.env).
+          # The generated octocov config references env.IS_FORK via comment.if,
+          # which is evaluated by octocov at runtime using the process environment.
         run: |
-          # W1: Disable PR comment for fork PRs (token lacks pull-requests: write)
-          IS_FORK="false"
-          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
-            IS_FORK="true"
-          fi
-
           # W2: Build exclude list from comma-separated input
           # Fragment forms:
           #   *.go suffix (pb.go, _gen.go) → **/*<fragment>  (filename suffix match)
@@ -402,9 +406,7 @@ jobs:
             echo "  hideFooterLink: false"
           } > .octocov.yml
 
-          export IS_FORK
-
-          echo "Generated .octocov.yml:"
+          echo "Generated .octocov.yml (IS_FORK=${IS_FORK}):"
           cat .octocov.yml
 
       - name: Run octocov

@@ -193,7 +193,13 @@ jobs:
 
   # ── Coverage Report (separate job with write permissions) ───────────
   report-coverage:
-    if: inputs.has-tests && github.event_name == 'pull_request'
+    # Skip on fork PRs: forks receive a read-only GITHUB_TOKEN, so the
+    # vitest-coverage-report-action would fail to post the PR comment and
+    # block the required quality-gate for external contributors.
+    if: >-
+      inputs.has-tests &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     name: Coverage Report
     needs: [test]
     runs-on: ubuntu-latest
@@ -205,6 +211,8 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Download coverage artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
