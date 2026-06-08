@@ -1,5 +1,9 @@
 name: Octo PR Result Notify (reusable)
 
+# Refactored (Wave 2): MAPPING (validate + sanitize + format message) stays
+# here; TRANSPORT delegated to the shared octo-notify composite action.
+# See docs/workflow-architecture.md Plane 6.
+
 on:
   workflow_call:
     inputs:
@@ -56,9 +60,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Send result notification
+      - name: Build result message
+        id: build
         env:
-          OCTO_BOT_TOKEN: ${{ secrets.OCTO_BOT_TOKEN }}
           REPO_NAME: ${{ inputs.repo_name }}
           PR_NUMBER: ${{ inputs.pr_number }}
           PR_TITLE: ${{ inputs.pr_title }}
@@ -70,20 +74,20 @@ jobs:
           PR_DELETIONS: ${{ inputs.pr_deletions }}
           PR_CHANGED_FILES: ${{ inputs.pr_changed_files }}
           FEED_GROUP_ID: ${{ inputs.feed_group_id }}
-          API_BASE_URL: ${{ inputs.api_base_url }}
         run: |
-          python3 - << 'PYEOF'
-          import json
-          import os
-          import re
-          import sys
-          import time
-          import urllib.request
-          import urllib.error
+          python3 - <<'PYEOF'
+          import os, re, sys
+
+          OUT = os.environ['GITHUB_OUTPUT']
+          DELIM = '__OCTO_NOTIFY_EOF_9f3a__'
+
+          def emit(key, value):
+              with open(OUT, 'a') as f:
+                  f.write(f'{key}<<{DELIM}\n{value}\n{DELIM}\n')
 
           ALLOWED_KINDS = {
               "pr_merged", "pr_closed",
-              "review_approved", "review_changes_requested"
+              "review_approved", "review_changes_requested",
           }
 
           def require_env(name):
@@ -98,20 +102,14 @@ jobs:
 
           def require_group_id(name):
               val = os.environ.get(name, '').strip()
-              if not val:
-                  print(f'ERROR: required env var {name} is missing')
-                  sys.exit(2)
-              if not re.fullmatch(r'[0-9a-f]{32}', val):
+              if not re.fullmatch(r'[0-9a-f]{32}', val or ''):
                   print(f'ERROR: {name} must be a 32-char lowercase hex group id')
                   sys.exit(2)
               return val
 
           def require_repo_name(name):
               val = os.environ.get(name, '').strip()
-              if not val:
-                  print(f'ERROR: required env var {name} is missing')
-                  sys.exit(2)
-              if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,99}', val) or val in {'.', '..'}:
+              if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,99}', val or '') or val in {'.', '..'}:
                   print(f'ERROR: {name} contains invalid characters: {val!r}')
                   sys.exit(2)
               return val
@@ -121,103 +119,60 @@ jobs:
               s = re.sub(r'[\x00-\x1f\x7f]', ' ', s)
               return s[:max_len]
 
-          def send_message(api_base_url, token, group_id, content, failed, retries=3):
-              url = f"{api_base_url}/v1/bot/sendMessage"
-              payload = json.dumps({'channel_id': group_id, 'channel_type': 2, 'payload': {'type': 1, 'content': content}}).encode()
-              headers = {
-                  "Content-Type": "application/json",
-                  "Authorization": f"Bearer {token}"
-              }
-              last_err = None
-              for attempt in range(1, retries + 1):
-                  try:
-                      req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-                      with urllib.request.urlopen(req, timeout=15) as r:
-                          print(f'  → {group_id[:8]}... HTTP {r.status}')
-                          return
-                  except urllib.error.HTTPError as e:
-                      last_err = e
-                      if e.code in (429, 500, 502, 503, 504) and attempt < retries:
-                          wait = 2 ** attempt
-                          if e.code == 429:
-                              try:
-                                  retry_after = int(e.headers.get('Retry-After', 0))
-                                  if retry_after > 0:
-                                      wait = max(retry_after, wait)
-                              except (ValueError, TypeError):
-                                  pass
-                          print(f'  WARN: HTTP {e.code} on attempt {attempt}, retrying in {wait}s...')
-                          time.sleep(wait)
-                      else:
-                          break
-                  except (urllib.error.URLError, TimeoutError) as e:
-                      last_err = e
-                      if attempt < retries:
-                          wait = 2 ** attempt
-                          print(f'  WARN: {e} on attempt {attempt}, retrying in {wait}s...')
-                          time.sleep(wait)
-                      else:
-                          break
-              print(f'ERROR: failed to send to {group_id[:8]}...: {last_err}')
-              failed.append(group_id)
+          repo_name = require_repo_name('REPO_NAME')
+          pr_number = require_env("PR_NUMBER")
+          pr_title = sanitize_text(require_env("PR_TITLE"))
+          pr_url = require_env("PR_URL")
+          pr_author = sanitize_text(require_env('PR_AUTHOR'), max_len=80)
+          event_kind = require_env("EVENT_KIND")
+          reviewer = sanitize_text(get_env('REVIEWER'), max_len=80)
+          reviewer_display = reviewer if reviewer else "(unknown)"
+          pr_additions = int(get_env("PR_ADDITIONS", "0") or "0")
+          pr_deletions = int(get_env("PR_DELETIONS", "0") or "0")
+          pr_changed_files = int(get_env("PR_CHANGED_FILES", "0") or "0")
+          # Validate group id format (transport allowlists the API base itself).
+          require_group_id("FEED_GROUP_ID")
 
-          def main():
-              token = require_env("OCTO_BOT_TOKEN")
-              repo_name = require_repo_name('REPO_NAME')
-              pr_number = require_env("PR_NUMBER")
-              pr_title = sanitize_text(require_env("PR_TITLE"))
-              pr_url = require_env("PR_URL")
-              pr_author = sanitize_text(require_env('PR_AUTHOR'), max_len=80)
-              event_kind = require_env("EVENT_KIND")
-              reviewer = sanitize_text(get_env('REVIEWER'), max_len=80)
-              reviewer_display = reviewer if reviewer else "(unknown)"
-              pr_additions = int(get_env("PR_ADDITIONS", "0") or "0")
-              pr_deletions = int(get_env("PR_DELETIONS", "0") or "0")
-              pr_changed_files = int(get_env("PR_CHANGED_FILES", "0") or "0")
-              feed_group_id = require_group_id("FEED_GROUP_ID")
-              api_base_url = require_env("API_BASE_URL")
+          if event_kind not in ALLOWED_KINDS:
+              print(f"::warning::Unrecognized event_kind '{event_kind}', skipping")
+              emit('skip', 'true')
+              sys.exit(0)
 
-              api_base_url = api_base_url.rstrip('/')
-              ALLOWED_API_BASES = {'https://im.deepminer.com.cn/api'}
-              if api_base_url.lower() not in {b.lower() for b in ALLOWED_API_BASES}:
-                  print(f'ERROR: API_BASE_URL is not in the allowlist: {api_base_url}')
-                  sys.exit(2)
+          if event_kind == "pr_merged":
+              stats_part = f' · +{pr_additions} -{pr_deletions} · {pr_changed_files} files' if (pr_additions or pr_deletions or pr_changed_files) else ''
+              message = (
+                  f"\U0001f7e2 [{repo_name}] PR #{pr_number} merged · {pr_title}\n"
+                  f"\U0001f464 {pr_author}{stats_part}\n"
+                  f"\U0001f517 {pr_url}"
+              )
+          elif event_kind == "pr_closed":
+              message = (
+                  f"\U0001f534 [{repo_name}] PR #{pr_number} closed · {pr_title}\n"
+                  f"\U0001f464 {pr_author}\n"
+                  f"\U0001f517 {pr_url}"
+              )
+          elif event_kind == "review_approved":
+              message = (
+                  f"✅ [{repo_name}] PR #{pr_number} approved · {pr_title}\n"
+                  f"\U0001f464 reviewer: {reviewer_display}\n"
+                  f"\U0001f517 {pr_url}"
+              )
+          elif event_kind == "review_changes_requested":
+              message = (
+                  f"\U0001f501 [{repo_name}] PR #{pr_number} changes requested · {pr_title}\n"
+                  f"\U0001f464 reviewer: {reviewer_display}\n"
+                  f"\U0001f517 {pr_url}"
+              )
 
-              if event_kind not in ALLOWED_KINDS:
-                  print(f"::warning::Unrecognized event_kind '{event_kind}', skipping")
-                  sys.exit(0)
-
-              if event_kind == "pr_merged":
-                  stats_part = f' · +{pr_additions} -{pr_deletions} · {pr_changed_files} files' if (pr_additions or pr_deletions or pr_changed_files) else ''
-                  message = (
-                      f"\U0001f7e2 [{repo_name}] PR #{pr_number} merged · {pr_title}\n"
-                      f"\U0001f464 {pr_author}{stats_part}\n"
-                      f"\U0001f517 {pr_url}"
-                  )
-              elif event_kind == "pr_closed":
-                  message = (
-                      f"\U0001f534 [{repo_name}] PR #{pr_number} closed · {pr_title}\n"
-                      f"\U0001f464 {pr_author}\n"
-                      f"\U0001f517 {pr_url}"
-                  )
-              elif event_kind == "review_approved":
-                  message = (
-                      f"✅ [{repo_name}] PR #{pr_number} approved · {pr_title}\n"
-                      f"\U0001f464 reviewer: {reviewer_display}\n"
-                      f"\U0001f517 {pr_url}"
-                  )
-              elif event_kind == "review_changes_requested":
-                  message = (
-                      f"\U0001f501 [{repo_name}] PR #{pr_number} changes requested · {pr_title}\n"
-                      f"\U0001f464 reviewer: {reviewer_display}\n"
-                      f"\U0001f517 {pr_url}"
-                  )
-
-              failed = []
-              send_message(api_base_url, token, feed_group_id, message, failed)
-              if failed:
-                  sys.exit(1)
-
-          if __name__ == "__main__":
-              main()
+          emit('skip', 'false')
+          emit('im_message', message)
           PYEOF
+
+      - name: Send to Octo IM
+        if: steps.build.outputs.skip != 'true'
+        uses: Mininglamp-OSS/.github/.github/actions/octo-notify@main
+        with:
+          im-message: ${{ steps.build.outputs.im_message }}
+          im-token: ${{ secrets.OCTO_BOT_TOKEN }}
+          im-group-id: ${{ inputs.feed_group_id }}
+          im-api-base: ${{ inputs.api_base_url }}

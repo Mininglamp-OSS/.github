@@ -1,0 +1,136 @@
+# Reusable workflow: PR Title Lint (Conventional Commits)
+#
+# Under squash-and-merge (org default), the PR title becomes the squash commit
+# subject = the main-branch history, and release-drafter derives release notes
+# from it. So the PR title is the single load-bearing record — this enforces the
+# Conventional Commits format that CONTRIBUTING.md requires but nothing checks.
+#
+# Self-implemented via github-script (no new external action dependency). On
+# failure it posts/updates a single explanatory comment; on success it removes
+# that comment so a fixed title leaves no stale error.
+#
+# SECURITY: reads PR metadata via the API only; checks out no code. The title is
+# consumed via env (never shell/JS string-interpolated).
+#
+# Usage (caller, pull_request_target so forks can be commented on):
+#   on:
+#     pull_request_target:
+#       types: [opened, edited, reopened, synchronize]
+#   jobs:
+#     pr-title-lint:
+#       uses: Mininglamp-OSS/.github/.github/workflows/reusable-pr-title-lint.yml@v1
+#       with:
+#         pr_number: ${{ github.event.pull_request.number }}
+#         pr_title:  ${{ github.event.pull_request.title }}
+#         repo_owner: ${{ github.event.repository.owner.login }}
+#         repo_name:  ${{ github.event.repository.name }}
+name: Reusable — PR Title Lint
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        description: Pull request number
+        type: number
+        required: true
+      pr_title:
+        description: Pull request title to validate
+        type: string
+        required: true
+      repo_owner:
+        description: Repository owner
+        type: string
+        required: true
+      repo_name:
+        description: Repository name
+        type: string
+        required: true
+      types:
+        description: >-
+          Comma-separated allowed Conventional Commit types.
+        type: string
+        required: false
+        default: 'feat,fix,docs,style,refactor,perf,test,build,ci,chore,revert'
+
+permissions: {}
+
+jobs:
+  lint-title:
+    name: Lint PR title
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Validate Conventional Commits title
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_TITLE: ${{ inputs.pr_title }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REPO_OWNER: ${{ inputs.repo_owner }}
+          REPO_NAME: ${{ inputs.repo_name }}
+          ALLOWED_TYPES: ${{ inputs.types }}
+        with:
+          script: |
+            const owner = process.env.REPO_OWNER;
+            const repo = process.env.REPO_NAME;
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
+            const title = process.env.PR_TITLE || '';
+            const types = (process.env.ALLOWED_TYPES || '')
+              .split(',').map(t => t.trim()).filter(Boolean);
+
+            // Conventional Commits: type(optional-scope)(optional !): description
+            // e.g. "feat(auth): add PKCE", "fix!: drop legacy field"
+            const typeAlt = types.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+            const re = new RegExp(`^(${typeAlt})(\\([a-z0-9][a-z0-9._/-]*\\))?(!)?: .+`);
+
+            const marker = '<!-- octo-pr-title-lint -->';
+
+            async function findComment() {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: prNumber, per_page: 100,
+              });
+              return comments.find(c => c.body && c.body.includes(marker));
+            }
+
+            if (re.test(title)) {
+              core.info(`PR title OK: ${title}`);
+              // Remove any stale failure comment now that the title is valid.
+              const existing = await findComment();
+              if (existing) {
+                await github.rest.issues.deleteComment({
+                  owner, repo, comment_id: existing.id,
+                }).catch(() => {});
+                core.info('Removed stale title-lint comment.');
+              }
+              return;
+            }
+
+            const body = [
+              marker,
+              '### ❌ PR title does not follow Conventional Commits',
+              '',
+              `Your title: \`${title.replace(/`/g, "'")}\``,
+              '',
+              'Expected format: `type(optional-scope): description`',
+              '',
+              `Allowed types: ${types.map(t => `\`${t}\``).join(', ')}`,
+              '',
+              '**Examples:**',
+              '- `feat(auth): add OAuth2 PKCE flow`',
+              '- `fix(api): handle null upstream response`',
+              '- `docs: update installation steps`',
+              '',
+              'This repository uses squash-and-merge, so the PR title becomes the ' +
+              'commit subject on `main` and feeds release notes. Please update the ' +
+              'title — this check re-runs automatically.',
+            ].join('\n');
+
+            const existing = await findComment();
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+            }
+
+            core.setFailed(`PR title does not match Conventional Commits: "${title}"`);
