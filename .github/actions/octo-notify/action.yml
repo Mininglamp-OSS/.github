@@ -1,0 +1,180 @@
+# Octo Notify — the organization's single outbound transport.
+#
+# One composite action for all outbound notification, used by every Plane-6
+# notification workflow. It does TRANSPORT ONLY — it knows nothing about issues
+# vs PRs vs CI. The event→message mapping (formatting the IM content string,
+# building the webhook JSON payload, sanitizing field values) stays in each
+# calling workflow. This is what keeps a single shared action from degrading
+# into a junk-drawer.
+#
+# Two modes, enabled independently by which inputs are supplied (use one or both):
+#
+#   IM mode      — set `im-message` (+ `im-token`, `im-group-id`): wraps the
+#                  message in the Octo IM bot envelope and POSTs it to the
+#                  allowlisted IM API.
+#   Webhook mode — set `webhook-url` (+ `webhook-payload`): POSTs the caller-built
+#                  JSON payload as-is to an external endpoint (e.g. the triage
+#                  agent). The URL is a capability secret — callers MUST pass it
+#                  from a secret, never hardcode it (repos are public).
+#
+# Shared core (written once here): HTTP POST with retry + exponential backoff on
+# 429/5xx, honoring Retry-After on 429.
+#
+# SECURITY: all inputs are consumed via `env:` and never interpolated into the
+# shell or into a JSON string with `${{ }}`. Callers likewise must pass values
+# through `with:` (which lands in `env:` here), never build payloads by string
+# interpolation in a `run:` block.
+name: Octo Notify
+description: >-
+  Organization outbound transport: Octo IM message and/or external webhook POST,
+  with retry and exponential backoff. Transport only — message/payload mapping
+  stays in the calling workflow.
+
+inputs:
+  # ── IM mode ──────────────────────────────────────────────────────────
+  im-message:
+    description: >-
+      Pre-formatted IM message content. When non-empty, IM mode is enabled.
+      Build and sanitize this string in the calling workflow.
+    required: false
+    default: ''
+  im-token:
+    description: 'Octo IM bot token (pass from secrets.OCTO_BOT_TOKEN). Required when im-message is set.'
+    required: false
+    default: ''
+  im-group-id:
+    description: 'Octo IM target group id. Required when im-message is set.'
+    required: false
+    default: ''
+  im-api-base:
+    description: 'Octo IM API base URL. Only the production endpoint is allowlisted.'
+    required: false
+    default: 'https://im.deepminer.com.cn/api'
+  # ── Webhook mode ─────────────────────────────────────────────────────
+  webhook-url:
+    description: >-
+      External endpoint URL. When non-empty, webhook mode is enabled.
+      Pass from a secret — the URL path may itself be the auth capability.
+    required: false
+    default: ''
+  webhook-payload:
+    description: >-
+      JSON string to POST as the webhook body. Build it safely in the calling
+      workflow (e.g. via json.dumps over env vars). Required when webhook-url is set.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Send notifications
+      shell: bash
+      env:
+        IM_MESSAGE: ${{ inputs.im-message }}
+        IM_TOKEN: ${{ inputs.im-token }}
+        IM_GROUP_ID: ${{ inputs.im-group-id }}
+        IM_API_BASE: ${{ inputs.im-api-base }}
+        WEBHOOK_URL: ${{ inputs.webhook-url }}
+        WEBHOOK_PAYLOAD: ${{ inputs.webhook-payload }}
+      run: |
+        python3 - <<'PYEOF'
+        import json, os, sys, time, urllib.request, urllib.error
+
+
+        def post_with_retry(url, body_bytes, headers, label, retries=3):
+            """POST with exponential backoff on 429/5xx; honor Retry-After on 429."""
+            last_err = None
+            for attempt in range(1, retries + 1):
+                try:
+                    req = urllib.request.Request(url, data=body_bytes, headers=headers, method='POST')
+                    with urllib.request.urlopen(req, timeout=15) as r:
+                        print(f'  -> {label}: HTTP {r.status}')
+                        return True
+                except urllib.error.HTTPError as e:
+                    last_err = e
+                    if e.code in (429, 500, 502, 503, 504) and attempt < retries:
+                        wait = 2 ** attempt
+                        if e.code == 429:
+                            try:
+                                retry_after = int(e.headers.get('Retry-After', 0))
+                                if retry_after > 0:
+                                    wait = max(retry_after, wait)
+                            except (ValueError, TypeError):
+                                pass
+                        print(f'  WARN: {label}: HTTP {e.code} on attempt {attempt}, retrying in {wait}s...')
+                        time.sleep(wait)
+                    else:
+                        break
+                except (urllib.error.URLError, TimeoutError) as e:
+                    last_err = e
+                    if attempt < retries:
+                        wait = 2 ** attempt
+                        print(f'  WARN: {label}: {e} on attempt {attempt}, retrying in {wait}s...')
+                        time.sleep(wait)
+                    else:
+                        break
+            print(f'::error::{label}: failed after {retries} attempts: {last_err}')
+            return False
+
+
+        im_message = os.environ.get('IM_MESSAGE', '')
+        im_token = os.environ.get('IM_TOKEN', '').strip()
+        im_group = os.environ.get('IM_GROUP_ID', '').strip()
+        im_api_base = os.environ.get('IM_API_BASE', 'https://im.deepminer.com.cn/api').strip().rstrip('/')
+        webhook_url = os.environ.get('WEBHOOK_URL', '').strip()
+        webhook_payload = os.environ.get('WEBHOOK_PAYLOAD', '')
+
+        attempted = False
+        failures = []
+
+        # ── IM mode ──────────────────────────────────────────────────────
+        if im_message:
+            attempted = True
+            if not im_token or not im_group:
+                print('::error::IM mode (im-message set) requires im-token and im-group-id')
+                failures.append('im:config')
+            else:
+                # Allowlist: only the production IM endpoint may be targeted.
+                ALLOWED_API_BASES = {'https://im.deepminer.com.cn/api'}
+                if im_api_base.lower() not in {b.lower() for b in ALLOWED_API_BASES}:
+                    print(f'::error::im-api-base is not allowlisted: {im_api_base}')
+                    failures.append('im:allowlist')
+                else:
+                    body = json.dumps({
+                        'channel_id': im_group,
+                        'channel_type': 2,
+                        'payload': {'type': 1, 'content': im_message},
+                    }).encode()
+                    headers = {'Authorization': f'Bearer {im_token}', 'Content-Type': 'application/json'}
+                    if not post_with_retry(im_api_base + '/v1/bot/sendMessage', body, headers,
+                                           f'IM {im_group[:8]}...'):
+                        failures.append('im:send')
+
+        # ── Webhook mode ─────────────────────────────────────────────────
+        if webhook_url:
+            attempted = True
+            if not webhook_payload:
+                print('::error::webhook mode (webhook-url set) requires webhook-payload')
+                failures.append('webhook:config')
+            else:
+                # Validate the caller built valid JSON before POSTing.
+                try:
+                    json.loads(webhook_payload)
+                except json.JSONDecodeError as e:
+                    print(f'::error::webhook-payload is not valid JSON: {e}')
+                    failures.append('webhook:json')
+                else:
+                    headers = {'Content-Type': 'application/json'}
+                    if not post_with_retry(webhook_url, webhook_payload.encode(), headers, 'webhook'):
+                        failures.append('webhook:send')
+
+        if not attempted:
+            print('::error::octo-notify invoked with neither im-message nor webhook-url')
+            sys.exit(2)
+
+        if failures:
+            print(f'::error::octo-notify completed with failures: {failures}')
+            sys.exit(1)
+
+        print('octo-notify: all sends succeeded')
+        PYEOF
