@@ -1,0 +1,115 @@
+# Release automation: maintain the rolling major-version alias and GitHub Release.
+#
+# When an immutable version tag `vX.Y.Z` is pushed, this workflow:
+#   1. validates strict semver,
+#   2. fast-forwards the rolling major alias (e.g. v1) to that commit,
+#   3. creates/updates the corresponding GitHub Release.
+#
+# This is the mechanism that lets consumer repos pin a stable rolling major
+# (e.g. @v1) and receive vX.Y.Z fixes automatically, while vX.Y.Z stays an
+# immutable rollback anchor. See docs/workflow-architecture.md §5.
+#
+# Pre-release tags (vX.Y.Z-rc.1 etc.) do NOT move the major alias — only stable
+# releases advance what @vX points to.
+#
+# SECURITY: triggered by tag push only; uses the tag ref as given; checks out no
+# untrusted PR code. Alias move uses the API (no force-push of protected refs).
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions: {}
+
+jobs:
+  release:
+    name: Tag alias + GitHub Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write  # create/update tags (alias) and releases
+    steps:
+      - name: Resolve version, validate semver, classify pre-release
+        id: ver
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          TAG="$REF_NAME"
+          # Strict semver (same regex as reusable-release-publish.yml): rejects
+          # leading zeros, empty segments, and non-semver aliases (v1, v1.2).
+          if ! printf '%s' "$TAG" | grep -Eq \
+            '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?([+][0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'; then
+            echo "::error::Tag '$TAG' is not strict semver (vMAJOR.MINOR.PATCH[-prerelease][+build])"
+            exit 1
+          fi
+          # Major number = first dotted segment without the leading 'v'.
+          major="${TAG#v}"; major="${major%%.*}"
+          # Pre-release if a hyphen segment is present.
+          if printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+-'; then
+            prerelease="true"
+          else
+            prerelease="false"
+          fi
+          {
+            echo "tag=$TAG"
+            echo "major=v$major"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+          echo "Tag $TAG → major alias v$major, prerelease=$prerelease"
+
+      - name: Move rolling major alias
+        # Only stable releases advance the major alias.
+        if: steps.ver.outputs.prerelease == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          MAJOR: ${{ steps.ver.outputs.major }}
+        run: |
+          set -euo pipefail
+          # Resolve the commit the version tag points to (deref annotated tag).
+          ref_data=$(gh api "repos/${{ github.repository }}/git/ref/tags/${TAG}")
+          obj_type=$(printf '%s' "$ref_data" | jq -re '.object.type')
+          obj_sha=$(printf '%s' "$ref_data" | jq -re '.object.sha')
+          if [ "$obj_type" = "tag" ]; then
+            commit_sha=$(gh api "repos/${{ github.repository }}/git/tags/${obj_sha}" -q '.object.sha')
+          else
+            commit_sha="$obj_sha"
+          fi
+          echo "Pointing ${MAJOR} → ${commit_sha}"
+
+          # Create or update the lightweight alias ref via the API (no local push).
+          if gh api "repos/${{ github.repository }}/git/ref/tags/${MAJOR}" >/dev/null 2>&1; then
+            gh api --method PATCH "repos/${{ github.repository }}/git/refs/tags/${MAJOR}" \
+              -f sha="${commit_sha}" -F force=true >/dev/null
+            echo "Updated existing alias ${MAJOR}"
+          else
+            gh api --method POST "repos/${{ github.repository }}/git/refs" \
+              -f ref="refs/tags/${MAJOR}" -f sha="${commit_sha}" >/dev/null
+            echo "Created alias ${MAJOR}"
+          fi
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          PRERELEASE: ${{ steps.ver.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          # Look up an existing release for this tag (paginate for many releases).
+          release_id=$(gh api "repos/${{ github.repository }}/releases" --paginate \
+            | jq -rs --arg tag "$TAG" '[.[][] | select(.tag_name == $tag) | .id][0] // empty')
+
+          if [ -n "$release_id" ]; then
+            echo "Updating release ${release_id} for ${TAG}"
+            gh api --method PATCH "repos/${{ github.repository }}/releases/${release_id}" \
+              -f tag_name="${TAG}" -F prerelease="${PRERELEASE}" >/dev/null
+          else
+            echo "Creating release for ${TAG}"
+            gh api --method POST "repos/${{ github.repository }}/releases" \
+              -f tag_name="${TAG}" -f name="${TAG}" \
+              -F prerelease="${PRERELEASE}" -F generate_release_notes=true >/dev/null
+          fi
+          echo "Release ready for ${TAG}"

@@ -27,7 +27,7 @@
 #       branches: [main]
 #   jobs:
 #     history:
-#       uses: Mininglamp-OSS/.github/.github/workflows/reusable-history-check.yml@main
+#       uses: Mininglamp-OSS/.github/.github/workflows/reusable-history-check.yml@v1
 #
 name: Reusable — History Check
 

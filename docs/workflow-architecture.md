@@ -382,32 +382,45 @@ All §4a design decisions are resolved. Remaining items are sequencing only:
 
 ## 5. Foundation: versioning & distribution (P0 — everything rests on this)
 
-The reason this central repo exists is undermined today: it is not actually
-giving consumers a stable, auditable version to pin to.
+The reason this central repo exists was undermined: it was not giving consumers a
+stable, auditable version to pin to. **Wave 1 (in progress) fixes this.**
 
-**Current broken state (verified):**
-- `v1` and `v2` both point to the same commit (#31) — major tags are meaningless.
-- Both tags lag far behind `main` (codeql injection fix #59, docker-lint #61,
-  history-check #62, IM hardening — all only on `main`).
-- Inline usage docs contradict themselves: `@main` ×5 vs `@v1` ×1. Effective
-  policy has degraded to "everyone pins `@main`".
+**Original broken state (verified):**
+- `v1` and `v2` both pointed to the same commit (#31) — major tags meaningless.
+- Both tags lagged far behind `main` (29 commits) — fixes only on `main`.
+- Every real caller pinned `@main`; the only `@v1` strings were usage examples.
 
 **Pinning consumers to a movable `@main` is a supply-chain anti-pattern** for a
-trust root that holds secrets across 19 repos: one bad commit to `main` hits all
-19 instantly, with no rollback anchor and no way to audit which repo runs what.
+trust root that holds secrets across ~21 repos: one bad commit to `main` hits all
+of them instantly, with no rollback anchor and no audit of which repo runs what.
 
-**Target:**
-1. **SemVer**: immutable `vX.Y.Z` tags + a rolling `vX` major alias. Fix
-   `v1==v2` and the lag.
-2. **All callers pin `@v1`** (or a SHA); usage docs unified — eliminate `@main`.
-3. **Release automation**: `.github` gets a workflow that moves the `vX` alias
-   when a `vX.Y.Z` tag is pushed.
-4. **Distribution = "both" model:**
+**Resolution (Wave 1):**
+1. **SemVer**: immutable `vX.Y.Z` tags + a rolling `vX` major alias. `v1.0.0` cut
+   from current `main`; `v1` rolls to it; the meaningless `v2` is deleted.
+2. **All callers pin rolling `@v1`** (full migration); usage docs unified.
+3. **Release automation**: `.github/workflows/release.yml` moves the `vX` alias
+   and creates/updates the GitHub Release on every `vX.Y.Z` tag push (stable
+   releases only; pre-releases do not advance the alias).
+4. **Rename via shim**: `octo-issue-feed.yml` → `octo-issue-notify.yml` (canonical).
+   The old path is kept as a thin pass-through shim forwarding to the new name, so
+   callers migrate without a flag day; the shim is removed in a later `vX.Y.0`
+   once no caller references it.
+5. **Distribution = "both" model:**
    - **Enforced gates** (history-check, check-sprint, dependency-review,
      secret-scan, language quality) → org **required workflows / rulesets**, so
      no per-repo opt-in is needed. *This is what fixes the #65 failure mode.*
    - **Optional pieces** → `.github/workflow-templates/` starter workflows for
      one-click scaffolding of new repos, keeping callers uniform.
+
+**Known limitation — internal refs at v1.0.0 (tighten in v1.1.0):** the reusables'
+own internal `uses:` (the four notify workflows → `octo-notify@main`; the
+`octo-issue-feed` shim → `octo-issue-notify.yml@main`) stay `@main` in v1.0.0. A
+`@v1` caller therefore gets the frozen v1 *workflow* but a transitively-latest
+transport action — a partial isolation leak. They are NOT switched to `@v1` yet
+because the current `v1`/`#31` snapshot predates the `octo-notify` action (added
+in #66), so an internal `@v1` would resolve to a snapshot with no such action and
+break. Once `v1` is rolled onto a commit that contains `octo-notify` (this wave),
+a follow-up tightens internal refs to `@v1` and re-cuts `v1.1.0`.
 
 ---
 
