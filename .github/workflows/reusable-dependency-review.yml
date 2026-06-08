@@ -1,0 +1,77 @@
+# Reusable workflow: Dependency Review
+#
+# Gates pull requests on dependency changes — fails when a PR introduces a
+# dependency with a known vulnerability at/above a configurable severity, or a
+# disallowed license. Uses GitHub's first-party dependency-review-action, which
+# diffs the PR's dependency manifest/lockfile against the base.
+#
+# This is ORTHOGONAL to osv-scanner.yml (used by several repos): osv-scanner
+# checks currently-pinned versions against the OSV DB on a schedule; this checks
+# the *delta a PR introduces* at review time. Different question, different timing.
+#
+# Requires the GitHub Dependency Graph (enabled by default on public repos).
+#
+# SECURITY: reads PR metadata via the API only; no code is checked out or run.
+#
+# Usage (caller):
+#   on:
+#     pull_request:
+#       branches: [main]
+#   jobs:
+#     dependency-review:
+#       uses: Mininglamp-OSS/.github/.github/workflows/reusable-dependency-review.yml@v1
+name: Reusable — Dependency Review
+
+on:
+  workflow_call:
+    inputs:
+      fail-on-severity:
+        description: 'Minimum severity that fails the check: low, moderate, high, critical.'
+        type: string
+        required: false
+        default: 'high'
+      comment-summary-in-pr:
+        description: 'Post a summary comment on the PR: always, on-failure, never.'
+        type: string
+        required: false
+        default: 'on-failure'
+      allow-licenses:
+        description: >-
+          Optional comma-separated SPDX allowlist (e.g. "MIT, Apache-2.0").
+          Empty = do not enforce a license allowlist. Mutually exclusive with
+          deny-licenses (set at most one).
+        type: string
+        required: false
+        default: ''
+      deny-licenses:
+        description: >-
+          Optional comma-separated SPDX denylist (e.g. "GPL-3.0, AGPL-3.0").
+          Empty = no denylist. Mutually exclusive with allow-licenses.
+        type: string
+        required: false
+        default: ''
+
+permissions: {}
+
+jobs:
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # Needed for comment-summary-in-pr to post/update the summary comment.
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: ${{ inputs.fail-on-severity }}
+          comment-summary-in-pr: ${{ inputs.comment-summary-in-pr }}
+          allow-licenses: ${{ inputs.allow-licenses }}
+          deny-licenses: ${{ inputs.deny-licenses }}
