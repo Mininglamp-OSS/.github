@@ -1,0 +1,6 @@
+{
+  "name": "Octo — Repo governance",
+  "description": "Orphan-history check, PR title lint, size/dependency labeler, and stale sweep.",
+  "iconName": "git-pull-request",
+  "categories": ["Automation"]
+}

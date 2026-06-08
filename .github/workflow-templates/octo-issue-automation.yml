@@ -1,0 +1,35 @@
+# Octo issue automation: welcome new issues, add to the org Project board,
+# and notify Octo IM + forward to the triage agent.
+# Requires org/repo secrets: OCTO_BOT_TOKEN, PROJECT_TOKEN, TRIAGE_WEBHOOK_URL.
+name: Issue Automation
+
+on:
+  issues:
+    types: [opened]
+
+permissions: {}
+
+jobs:
+  welcome:
+    permissions:
+      issues: write
+    uses: Mininglamp-OSS/.github/.github/workflows/issue-welcome.yml@v1
+
+  add-to-project:
+    uses: Mininglamp-OSS/.github/.github/workflows/auto-add-to-project.yml@v1
+    secrets:
+      PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+
+  notify:
+    uses: Mininglamp-OSS/.github/.github/workflows/octo-issue-notify.yml@v1
+    with:
+      repo_name: ${{ github.event.repository.name }}
+      issue_number: ${{ github.event.issue.number }}
+      issue_title: ${{ github.event.issue.title }}
+      issue_url: ${{ github.event.issue.html_url }}
+      issue_author: ${{ github.event.issue.user.login }}
+      event_action: ${{ github.event.action }}
+    secrets:
+      OCTO_BOT_TOKEN: ${{ secrets.OCTO_BOT_TOKEN }}
+      # Forward issues to the triage agent (omit to disable). REQUIRED for triage.
+      TRIAGE_WEBHOOK_URL: ${{ secrets.TRIAGE_WEBHOOK_URL }}

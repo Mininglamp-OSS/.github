@@ -1,0 +1,16 @@
+# Octo release: keep a rolling draft release from merged PRs, and publish on tag.
+name: Release
+
+on:
+  push:
+    branches: [ $default-branch ]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  draft:
+    uses: Mininglamp-OSS/.github/.github/workflows/reusable-release-drafter.yml@v1
+    permissions:
+      contents: write
+      pull-requests: read
