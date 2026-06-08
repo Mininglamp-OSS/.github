@@ -227,7 +227,7 @@ jobs:
 
       - name: Send to CI status feed
         if: steps.build.outputs.skip != 'true'
-        uses: Mininglamp-OSS/.github/.github/actions/octo-notify@main
+        uses: Mininglamp-OSS/.github/.github/actions/octo-notify@v1
         with:
           im-message: ${{ steps.build.outputs.im_message }}
           im-token: ${{ secrets.OCTO_BOT_TOKEN }}
@@ -238,7 +238,7 @@ jobs:
         # Run even if the ci-status send failed, so one IM group outage does not
         # suppress the other (matches the original "attempt both groups" behavior).
         if: ${{ always() && steps.build.outputs.skip != 'true' }}
-        uses: Mininglamp-OSS/.github/.github/actions/octo-notify@main
+        uses: Mininglamp-OSS/.github/.github/actions/octo-notify@v1
         with:
           im-message: ${{ steps.build.outputs.im_message }}
           im-token: ${{ secrets.OCTO_BOT_TOKEN }}
