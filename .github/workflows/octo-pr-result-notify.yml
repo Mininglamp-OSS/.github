@@ -170,7 +170,7 @@ jobs:
 
       - name: Send to Octo IM
         if: steps.build.outputs.skip != 'true'
-        uses: Mininglamp-OSS/.github/.github/actions/octo-notify@main
+        uses: Mininglamp-OSS/.github/.github/actions/octo-notify@v1
         with:
           im-message: ${{ steps.build.outputs.im_message }}
           im-token: ${{ secrets.OCTO_BOT_TOKEN }}

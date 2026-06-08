@@ -402,9 +402,9 @@ of them instantly, with no rollback anchor and no audit of which repo runs what.
    and creates/updates the GitHub Release on every `vX.Y.Z` tag push (stable
    releases only; pre-releases do not advance the alias).
 4. **Rename via shim**: `octo-issue-feed.yml` → `octo-issue-notify.yml` (canonical).
-   The old path is kept as a thin pass-through shim forwarding to the new name, so
-   callers migrate without a flag day; the shim is removed in a later `vX.Y.0`
-   once no caller references it.
+   During transition the old path was a thin pass-through shim. **Resolved in
+   v1.1.0**: all callers migrated to `octo-issue-notify.yml@v1`, the shim has zero
+   consumers and was removed.
 5. **Distribution = "both" model:**
    - **Enforced gates** (history-check, check-sprint, dependency-review,
      secret-scan, language quality) → org **required workflows / rulesets**, so
@@ -412,15 +412,13 @@ of them instantly, with no rollback anchor and no audit of which repo runs what.
    - **Optional pieces** → `.github/workflow-templates/` starter workflows for
      one-click scaffolding of new repos, keeping callers uniform.
 
-**Known limitation — internal refs at v1.0.0 (tighten in v1.1.0):** the reusables'
-own internal `uses:` (the four notify workflows → `octo-notify@main`; the
-`octo-issue-feed` shim → `octo-issue-notify.yml@main`) stay `@main` in v1.0.0. A
-`@v1` caller therefore gets the frozen v1 *workflow* but a transitively-latest
-transport action — a partial isolation leak. They are NOT switched to `@v1` yet
-because the current `v1`/`#31` snapshot predates the `octo-notify` action (added
-in #66), so an internal `@v1` would resolve to a snapshot with no such action and
-break. Once `v1` is rolled onto a commit that contains `octo-notify` (this wave),
-a follow-up tightens internal refs to `@v1` and re-cuts `v1.1.0`.
+**Internal-ref isolation — RESOLVED in v1.1.0:** the reusables' own internal
+`uses:` (the notify workflows → `octo-notify`) now pin `@v1`, not `@main`. A
+`@v1` caller therefore gets a fully version-frozen graph (workflow *and* its
+transport action), closing the partial isolation leak that existed at v1.0.0.
+(They could not be `@v1` at v1.0.0 because the prior `v1`/#31 snapshot predated
+the `octo-notify` action from #66; once `v1` rolled onto a commit containing it,
+the refs were tightened and `v1.1.0` cut.)
 
 ---
 

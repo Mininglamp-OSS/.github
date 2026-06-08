@@ -16,9 +16,9 @@
 # secret. The agent fetches issue details itself via the GitHub API using
 # repo + number, so the body is NOT egressed through Actions.
 #
-# This is the canonical name. The legacy octo-issue-feed.yml is a thin
-# pass-through shim kept for callers not yet migrated; it will be removed after
-# all callers move to octo-issue-notify.yml@v1.
+# This is the canonical reusable for issue notification + triage. (It replaced
+# the legacy octo-issue-feed.yml, whose back-compat shim was removed in v1.1.0
+# once all callers migrated to octo-issue-notify.yml@v1.)
 name: Octo Issue Notify (reusable)
 
 on:
@@ -145,7 +145,7 @@ jobs:
 
       - name: Send (IM feed + optional triage webhook)
         if: steps.build.outputs.skip != 'true'
-        uses: Mininglamp-OSS/.github/.github/actions/octo-notify@main
+        uses: Mininglamp-OSS/.github/.github/actions/octo-notify@v1
         with:
           im-message: ${{ steps.build.outputs.im_message }}
           im-token: ${{ secrets.OCTO_BOT_TOKEN }}
