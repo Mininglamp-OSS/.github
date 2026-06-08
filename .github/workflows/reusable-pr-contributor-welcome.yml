@@ -13,7 +13,7 @@
 #       types: [opened]
 #   jobs:
 #     welcome:
-#       uses: Mininglamp-OSS/.github/.github/workflows/reusable-pr-contributor-welcome.yml@main
+#       uses: Mininglamp-OSS/.github/.github/workflows/reusable-pr-contributor-welcome.yml@v1
 #
 # SECURITY: this workflow does NOT check out any code. It only reads PR
 # metadata via the GitHub API, which is safe even when the caller uses

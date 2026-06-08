@@ -25,13 +25,13 @@
 #
 #   jobs:
 #     docker-lint:
-#       uses: Mininglamp-OSS/.github/.github/workflows/reusable-docker-lint.yml@main
+#       uses: Mininglamp-OSS/.github/.github/workflows/reusable-docker-lint.yml@v1
 #
 # Callers can override inputs for non-standard layouts:
 #
 #   jobs:
 #     docker-lint:
-#       uses: Mininglamp-OSS/.github/.github/workflows/reusable-docker-lint.yml@main
+#       uses: Mininglamp-OSS/.github/.github/workflows/reusable-docker-lint.yml@v1
 #       with:
 #         dockerfiles: 'Dockerfile.api Dockerfile.worker'
 #         shell-dir: './scripts'

@@ -1,25 +1,15 @@
-# Reusable workflow: notify Octo IM when an issue is opened, and forward the
-# event to the triage agent (optional).
+# DEPRECATED SHIM — kept only for backward compatibility.
 #
-# Refactored (Wave 2) to the two-stage shape: this workflow does the MAPPING
-# (sanitize + format the IM message, build the webhook JSON), and delegates
-# TRANSPORT to the shared `octo-notify` composite action (POST + retry/backoff,
-# IM allowlist). See docs/workflow-architecture.md §4a + Plane 6.
+# octo-issue-feed.yml was renamed to octo-issue-notify.yml (Wave 1). Callers
+# still pinning `octo-issue-feed.yml` keep working through this thin pass-through,
+# which forwards every input and secret to the canonical reusable.
 #
-# Event policy: only `opened` is forwarded (unified IM + webhook trigger). The
-# guard below enforces this centrally even if a caller still subscribes to
-# `reopened`/others. (This narrows the old [opened, reopened] behavior — intended.)
+# Migrate your caller to:
+#   uses: Mininglamp-OSS/.github/.github/workflows/octo-issue-notify.yml@v1
 #
-# Triage webhook (optional): pass the TRIAGE_WEBHOOK_URL secret to forward the
-# event to the triage agent, which classifies the issue (labels + a triage
-# comment). The URL is a capability secret — never hardcode it; pass from a
-# secret. The agent fetches issue details itself via the GitHub API using
-# repo + number, so the body is NOT egressed through Actions.
-#
-# NOTE: filename kept as octo-issue-feed.yml for backward compatibility with the
-# ~21 caller repos that pin octo-issue-feed.yml@main. Rename to
-# octo-issue-notify.yml happens together with the caller migration to @v1 (Wave 1).
-name: Octo Issue Feed (reusable)
+# This shim will be REMOVED once all callers have migrated. Do not add new
+# callers against this file.
+name: Octo Issue Feed (deprecated shim)
 
 on:
   workflow_call:
@@ -46,110 +36,33 @@ on:
         type: string
         required: false
         default: 'https://im.deepminer.com.cn/api'
-        description: 'Octo IM API base URL. Only the production endpoint is allowlisted.'
       feed_group_id:
         type: string
         required: false
         default: '151a45970e1546afa9e947ac36a5c4e5'
-        description: 'Octo IM group ID for the central issue feed channel.'
     secrets:
       OCTO_BOT_TOKEN:
         required: true
       TRIAGE_WEBHOOK_URL:
         required: false
-        description: >-
-          Triage agent webhook URL (capability secret). When provided, the issue
-          event is forwarded to the agent for classification. Omit to disable.
 
 permissions: {}
 
 jobs:
-  notify:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Build IM message and webhook payload
-        id: build
-        env:
-          REPO_NAME: ${{ inputs.repo_name }}
-          ISSUE_NUMBER: ${{ inputs.issue_number }}
-          ISSUE_TITLE: ${{ inputs.issue_title }}
-          ISSUE_URL: ${{ inputs.issue_url }}
-          ISSUE_AUTHOR: ${{ inputs.issue_author }}
-          EVENT_ACTION: ${{ inputs.event_action }}
-        run: |
-          python3 - <<'PYEOF'
-          import os, json, re, sys
-
-          OUT = os.environ['GITHUB_OUTPUT']
-          DELIM = '__OCTO_NOTIFY_EOF_9f3a__'
-
-          def emit(key, value):
-              with open(OUT, 'a') as f:
-                  f.write(f'{key}<<{DELIM}\n{value}\n{DELIM}\n')
-
-          def require_env(name):
-              val = os.environ.get(name, '').strip()
-              if not val:
-                  print(f'ERROR: required environment variable {name} is missing or empty')
-                  sys.exit(2)
-              return val
-
-          def sanitize_text(s, max_len=300):
-              """Strip control characters to prevent IM message injection."""
-              s = str(s or '')
-              s = re.sub(r'[\x00-\x1f\x7f]', ' ', s)
-              return s[:max_len]
-
-          def require_repo_name(name):
-              """Validate repo name to prevent path traversal / injection."""
-              val = require_env(name)
-              if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,99}', val) or val in {'.', '..'}:
-                  print(f'ERROR: {name} contains invalid characters: {val!r}')
-                  sys.exit(2)
-              return val
-
-          action = require_env('EVENT_ACTION')
-
-          # Unified event policy: only `opened` triggers IM + triage.
-          if action != 'opened':
-              print(f'Skipping event_action={action!r} — only opened is forwarded.')
-              emit('skip', 'true')
-              sys.exit(0)
-
-          repo   = require_repo_name('REPO_NAME')
-          num    = require_env('ISSUE_NUMBER')
-          title  = sanitize_text(require_env('ISSUE_TITLE'), max_len=300)
-          url    = require_env('ISSUE_URL')
-          author = sanitize_text(require_env('ISSUE_AUTHOR'), max_len=80)
-
-          # IM message (mapping stays here; transport is octo-notify)
-          im_message = f"🆕 [{repo}] Issue #{num} · {title}\n👤 {author}\n🔗 {url}"
-
-          # Webhook payload for the triage agent. Minimal identifying fields —
-          # the agent fetches full issue details via the GitHub API itself, so
-          # the issue body is not egressed through Actions.
-          webhook_payload = json.dumps({
-              'repo': repo,
-              'number': int(num),
-              'title': title,
-              'url': url,
-              'author': author,
-              'action': action,
-          })
-
-          emit('skip', 'false')
-          emit('im_message', im_message)
-          emit('webhook_payload', webhook_payload)
-          PYEOF
-
-      - name: Send (IM feed + optional triage webhook)
-        if: steps.build.outputs.skip != 'true'
-        uses: Mininglamp-OSS/.github/.github/actions/octo-notify@main
-        with:
-          im-message: ${{ steps.build.outputs.im_message }}
-          im-token: ${{ secrets.OCTO_BOT_TOKEN }}
-          im-group-id: ${{ inputs.feed_group_id }}
-          im-api-base: ${{ inputs.api_base_url }}
-          webhook-url: ${{ secrets.TRIAGE_WEBHOOK_URL }}
-          webhook-payload: ${{ steps.build.outputs.webhook_payload }}
+  forward:
+    # Pinned to @main so the shim always forwards to the current canonical
+    # reusable. (Callers pinning the shim at @v1 still resolve THIS file as it
+    # existed in v1.0.0, which forwards to octo-issue-notify.yml@main.)
+    uses: Mininglamp-OSS/.github/.github/workflows/octo-issue-notify.yml@main
+    with:
+      repo_name: ${{ inputs.repo_name }}
+      issue_number: ${{ inputs.issue_number }}
+      issue_title: ${{ inputs.issue_title }}
+      issue_url: ${{ inputs.issue_url }}
+      issue_author: ${{ inputs.issue_author }}
+      event_action: ${{ inputs.event_action }}
+      api_base_url: ${{ inputs.api_base_url }}
+      feed_group_id: ${{ inputs.feed_group_id }}
+    secrets:
+      OCTO_BOT_TOKEN: ${{ secrets.OCTO_BOT_TOKEN }}
+      TRIAGE_WEBHOOK_URL: ${{ secrets.TRIAGE_WEBHOOK_URL }}
