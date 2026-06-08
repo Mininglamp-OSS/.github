@@ -1,0 +1,6 @@
+{
+  "name": "Octo — Release drafter",
+  "description": "Maintain a rolling draft GitHub Release from merged PR titles.",
+  "iconName": "tag",
+  "categories": ["Deployment"]
+}

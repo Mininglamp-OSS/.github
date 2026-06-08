@@ -1,0 +1,6 @@
+{
+  "name": "Octo — Issue automation",
+  "description": "Welcome + add-to-board + IM notify + triage-agent webhook on new issues.",
+  "iconName": "comment-discussion",
+  "categories": ["Automation"]
+}

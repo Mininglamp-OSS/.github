@@ -1,0 +1,6 @@
+{
+  "name": "Octo — Security suite",
+  "description": "Weekly CodeQL + per-PR dependency review + gitleaks secret scan (set language in the file).",
+  "iconName": "shield",
+  "categories": ["Security"]
+}
