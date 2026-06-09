@@ -79,7 +79,7 @@ contend for another workflow's source of truth.
 | **3 — Supply chain / release** | "How is it shipped?" | `reusable-release-drafter`, `reusable-release-publish` |
 | **4 — Repository governance** | "Is the repo tidy & well-formed?" | `reusable-history-check`, `reusable-pr-labeler`, `reusable-stale`, `reusable-pr-title-lint`, `workflow-sanity` |
 | **5 — Project board** | "Project management" | `auto-add-to-project`, `reusable-check-sprint` |
-| **6 — Community & notification** | "How do we talk to humans?" | `issue-welcome`, `reusable-pr-contributor-welcome`, `octo-ci-status`, `octo-issue-notify`, `octo-pr-result-notify`, `octo-pr-review-feed` + shared `actions/octo-notify` |
+| **6 — Community & notification** | "How do we talk to humans?" | `issue-welcome`, `octo-ci-status`, `octo-issue-notify`, `octo-pr-result-notify`, `octo-pr-review-feed` + shared `actions/octo-notify` |
 
 ### Legend for state below
 - ✅ exists today, keep as-is
@@ -173,7 +173,9 @@ State: ✅ keep `auto-add-to-project`, `reusable-check-sprint` unchanged.
 
 State: 🔧 **collapse all outbound notification into one action.**
 
-- ✅ keep `issue-welcome`, `reusable-pr-contributor-welcome`.
+- ✅ keep `issue-welcome`. (`reusable-pr-contributor-welcome` was **removed**
+  org-wide — first-time PR welcome retired; greeting/onboarding is handled
+  elsewhere.)
 - ➕ `.github/actions/octo-notify` (**single composite action — the org's only
   outbound transport**): shared core is "HTTP POST with retry/backoff
   (429/5xx + Retry-After) + sanitize". Two modes, enabled independently by which
