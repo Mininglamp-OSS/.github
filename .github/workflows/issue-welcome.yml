@@ -1,3 +1,14 @@
+# Reusable workflow: tag newly-opened issues with `needs-triage`.
+#
+# This used to post a bilingual welcome comment with hardcoded bug/feature
+# copy. That overlapped with the dedicated triage agent (see octo-issue-notify's
+# webhook mode), which reads the issue content and does real classification +
+# triage commentary. So this workflow is now reduced to its deterministic,
+# always-on job: apply a `needs-triage` label. The triage agent owns greeting,
+# classification, and removing the label once triaged.
+#
+# Idempotent: GitHub de-dupes labels, so re-runs are harmless. Bot-opened issues
+# (Dependabot, etc.) are skipped. The `needs-triage` label is created if missing.
 name: Issue Welcome (Reusable)
 
 on:
@@ -6,16 +17,16 @@ on:
 permissions: {}
 
 jobs:
-  welcome:
+  label:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     concurrency:
-      group: welcome-${{ github.event.issue.number }}
+      group: needs-triage-${{ github.event.issue.number }}
       cancel-in-progress: false
     permissions:
       issues: write
     steps:
-      - name: Post welcome comment
+      - name: Apply needs-triage label
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -26,114 +37,39 @@ jobs:
               return;
             }
             // Skip bot-opened issues (Dependabot, etc.)
-            // Guard against ghost/deleted user accounts where issue.user may be null
+            // Guard against ghost/deleted user accounts where issue.user may be null.
             if (issue.user && issue.user.type === 'Bot') {
               console.log('Skipping bot-opened issue');
               return;
             }
 
-            const marker = '<!-- octo-issue-welcome:v1 -->';
-            const existingComments = await github.paginate(github.rest.issues.listComments, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issue.number,
-              per_page: 100
-            });
-            if (existingComments.some(c => c.body && c.body.includes(marker))) {
-              console.log('Welcome comment already posted, skipping (idempotent).');
-              return;
-            }
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const LABEL = 'needs-triage';
 
-            // Language detection: Chinese characters in title or body → reply in Chinese
-            const text = (issue.title || '') + ' ' + (issue.body || '');
-            const isChinese = /[\u4e00-\u9fff]/.test(text);
-
-            // Issue type detection via labels (auto-applied by issue templates)
-            const labels = issue.labels.map(l => l.name);
-            const isBug     = labels.includes('bug') || labels.includes('type:bug');
-            const isFeature = labels.includes('feature') || labels.includes('enhancement') || labels.includes('type:feature');
-
-            let body;
-
-            if (isChinese) {
-              if (isBug) {
-                body = [
-                  '嗨，感谢提交 Bug Report！🐙',
-                  '',
-                  '我们已收到，近期会进行 triage。',
-                  '',
-                  '如果还没补充以下信息，可以追加到 issue 里，会帮助我们更快定位问题：',
-                  '- Octo 版本号 / commit hash',
-                  '- 完整的复现步骤',
-                  '- 相关日志或截图（注意遮盖敏感信息）',
-                  '',
-                  '我们会在这里跟进，请关注此 issue 的动态。感谢你对 Octo 的贡献！',
-                  '',
-                  '— Octo Team 🐙'
-                ].join('\n');
-              } else if (isFeature) {
-                body = [
-                  '嗨，感谢提出功能建议！🐙',
-                  '',
-                  '我们已收到，会将其纳入 Roadmap 评估。',
-                  '',
-                  '如果有更多使用场景或具体需求，欢迎继续在此补充——背景信息越详细，越有助于我们排优先级。',
-                  '',
-                  '感谢你对 Octo 的关注与支持！',
-                  '',
-                  '— Octo Team 🐙'
-                ].join('\n');
+            // Ensure the label exists (create it if missing).
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: LABEL });
+            } catch (err) {
+              if (err.status === 404) {
+                try {
+                  await github.rest.issues.createLabel({
+                    owner, repo, name: LABEL,
+                    color: 'd876e3',
+                    description: 'Awaiting triage',
+                  });
+                  console.log(`Created label "${LABEL}".`);
+                } catch (e) {
+                  // Another concurrent run may have created it; ignore races.
+                  core.debug(`createLabel race/err: ${e.message}`);
+                }
               } else {
-                body = [
-                  '嗨，感谢提交 Issue！🐙',
-                  '',
-                  '我们已收到，近期会进行 triage。有后续进展会在这里跟进。',
-                  '',
-                  '— Octo Team 🐙'
-                ].join('\n');
-              }
-            } else {
-              if (isBug) {
-                body = [
-                  'Thanks for the bug report! 🐙',
-                  '',
-                  "We've received your issue and will triage it shortly.",
-                  '',
-                  'To help us resolve this faster, please make sure you\'ve included:',
-                  '- Octo version / commit hash',
-                  '- Exact steps to reproduce',
-                  '- Relevant logs or screenshots (please redact sensitive info)',
-                  '',
-                  "We'll follow up here once reviewed. Thanks for contributing to Octo!",
-                  '',
-                  '— Octo Team 🐙'
-                ].join('\n');
-              } else if (isFeature) {
-                body = [
-                  'Thanks for the feature request! 🐙',
-                  '',
-                  "We've received your suggestion and will evaluate it for our roadmap.",
-                  '',
-                  'Feel free to add more context — use cases, specific requirements, or examples — it really helps us prioritize effectively.',
-                  '',
-                  'Thanks for contributing to Octo!',
-                  '',
-                  '— Octo Team 🐙'
-                ].join('\n');
-              } else {
-                body = [
-                  'Thanks for opening this issue! 🐙',
-                  '',
-                  "We've received it and will triage shortly. We'll follow up here with any updates.",
-                  '',
-                  '— Octo Team 🐙'
-                ].join('\n');
+                throw err;
               }
             }
 
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issue.number,
-              body: marker + '\n' + body
+            // Apply the label (idempotent — GitHub de-dupes).
+            await github.rest.issues.addLabels({
+              owner, repo, issue_number: issue.number, labels: [LABEL],
             });
+            console.log(`Applied "${LABEL}" to issue #${issue.number}.`);
