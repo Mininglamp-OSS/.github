@@ -76,6 +76,14 @@ Use the repository's **Bug Report** issue template. Include:
 - Expected vs. actual behavior
 - Environment details (OS, runtime version, etc.)
 
+## Issue Triage
+
+New issues are labeled `needs-triage` automatically. Maintainers triage them — assign
+`type:*` and `priority:*` labels, confirm validity, and route security-sensitive
+reports — within **7 days** on the busiest repos. See the
+[Issue Triage Policy](docs/triage-policy.md) for the full SLA, priority guide, and
+per-repo ownership.
+
 ## Suggesting Features
 
 > **Significant features require a Discussion before an Issue.**
