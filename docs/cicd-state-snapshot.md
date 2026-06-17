@@ -2,6 +2,8 @@
 
 > Point-in-time inventory of the organization's reusable-workflow platform.
 > Generated 2026-06-08, after Wave 2 + Wave 1 (versioning) + triage-exit.
+> Updated 2026-06-17: CI-green is now an **enforced** required merge gate on the
+> 5 core repos (OCT-7) — see §5a.
 > Companion to `workflow-architecture.md` (the design); this is the *as-built* state.
 
 ---
@@ -108,9 +110,45 @@ openclaw-channel-octo pub    ●     ●      ●       ●         ●       �
 | **No language CI reusable** | go/node quality removed by #65; no org test/lint baseline | Wave 3 |
 | **CodeQL is per-PR on 11 repos** | should be weekly schedule + scoped to high-risk only | Wave 4 |
 | **Runner/checkout drift** | mix of `ubuntu-latest`/`ubuntu-24.04`, checkout v4/v6 across defs | Wave 5 |
-| **No enforced distribution** | adoption is per-repo opt-in; no org rulesets / required workflows | Wave 5 |
+| **No enforced distribution** | reusable *adoption* is per-repo opt-in (no org rulesets / required workflows). **CI-green merge gate now enforced** on the 5 core repos (§5a, OCT-7); broader required-workflow distribution still pending | Wave 5 |
 | **No starter templates** | new repos hand-copy callers | Wave 5 |
 | **Secret scanning L0/platform** | only CI layer planned; platform push-protection + local hooks not yet enabled | Plane 2 |
+
+---
+
+## 5a. Enforced merge gates — CI-green (OCT-7, 2026-06-17)
+
+`CI green` is now a **required status check** on `main` for all 5 core repos —
+red CI blocks merge. The existing `enforce_admins=true` and 3-approval review
+requirement are **preserved unchanged** on all 5; `strict` (require-up-to-date)
+is intentionally **off** to avoid forced-rebase churn (red CI still blocks
+regardless of base freshness).
+
+Two patterns, chosen per repo's CI shape:
+
+| Repo | Required context(s) | Pattern | Why |
+|---|---|---|---|
+| `octo-server` | `Build`, `Test`, `Vet`, `Lint`, `Personal MsgSendReq Lint`, `i18n Extract Check`, `i18n Lint` | direct job contexts | non-matrix jobs; job-level `if:` skips report as `skipped`, which GitHub counts as passing on docs-only PRs (no perma-block) |
+| `octo-web` | `Build` | direct job context | single non-matrix build job |
+| `octo-admin` | `CI Gate` | aggregate gate | `build` is a matrix job (node 18/20); a skipped matrix job collapses to one un-suffixed `build` context, a running one expands to per-combo contexts → neither is safely requirable |
+| `octo-adapters` | `CI Gate` | aggregate gate | `build` is a 3-OS matrix (same matrix-skip hazard) |
+| `octo-deployment` | `CI Gate` | aggregate gate | CI used **workflow-level** `pull_request.paths` (perma-block hazard: a PR touching no yaml/kustomize never creates a check). Path filter removed; gate added |
+
+**`CI Gate` job** (added to admin/adapters/deployment `ci.yml`): `if: always()`,
+`needs:` the repo's jobs, fails iff a needed job concluded `failure`/`cancelled`
+(`skipped`/`success` pass). One stable context, immune to matrix expansion and
+path-filter skips — the robust required-check target for path-filtered pipelines.
+
+**Validated with throwaway test PRs (closed after):**
+- *Direct pattern (octo-server):* deliberately-red build → `Build`=FAILURE → merge **blocked**; docs-only PR → all code jobs `skipped` → **not** blocked by the gate.
+- *Aggregate pattern:* malformed-yaml PR on octo-deployment → `CI Gate`=FAILURE → **blocked**; docs-only PR on octo-admin → `build` skipped, `CI Gate`=SUCCESS → **not** perma-blocked.
+
+> **Bootstrap note:** the 3 `CI Gate` jobs had to land on `main` before the gate
+> context could be required, but no second reviewer was available (only CEO/CTO
+> agents active; agents are not GitHub reviewers). Each gate PR was admin-merged
+> after its own `CI Gate` ran green, via a brief `enforce_admins` toggle, then
+> full protection (enforce_admins + 3 reviews + required `CI Gate`) was restored
+> in the same operation. octo-server/octo-web needed no workflow change.
 
 ---
 
