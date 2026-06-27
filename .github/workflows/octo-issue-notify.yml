@@ -52,6 +52,15 @@ on:
         required: false
         default: '151a45970e1546afa9e947ac36a5c4e5'
         description: 'Octo IM group ID for the central issue feed channel.'
+      enable_im_notify:
+        type: boolean
+        required: false
+        default: true
+        description: >-
+          When false, skip the Octo IM push and only fire the triage webhook.
+          Default true preserves existing behavior for all current callers; opt
+          in by passing `enable_im_notify: false` when a repo has already moved
+          to an external triage agent and no longer wants duplicate IM pings.
     secrets:
       OCTO_BOT_TOKEN:
         required: true
@@ -147,7 +156,7 @@ jobs:
         if: steps.build.outputs.skip != 'true'
         uses: Mininglamp-OSS/.github/.github/actions/octo-notify@v1
         with:
-          im-message: ${{ steps.build.outputs.im_message }}
+          im-message: ${{ inputs.enable_im_notify && steps.build.outputs.im_message || '' }}
           im-token: ${{ secrets.OCTO_BOT_TOKEN }}
           im-group-id: ${{ inputs.feed_group_id }}
           im-api-base: ${{ inputs.api_base_url }}
