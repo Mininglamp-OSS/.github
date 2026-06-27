@@ -1,5 +1,13 @@
 # Mininglamp-OSS — CI/CD & Automation Architecture
 
+> **2026-06-27 update — Plane 6 notification chain removed.** The IM
+> notification chain (`octo-ci-status`, `octo-issue-notify`, `octo-pr-result-notify`,
+> `octo-pr-review-feed`, `octo-pr-review-feed-comment`, and the shared
+> `actions/octo-notify` composite action) was decommissioned org-wide. Issue/PR
+> automation now runs through cron-driven multica autopilots; CI state changes
+> no longer push to IM. Sections below referring to those workflows are
+> historical context only — do not use them as a target for new work.
+>
 > The blueprint for every automation under the organization: reusable
 > workflows, their triggers, how they are versioned and distributed, and how
 > local git hooks relate to (but are **not** part of) the central system.
@@ -79,7 +87,7 @@ contend for another workflow's source of truth.
 | **3 — Supply chain / release** | "How is it shipped?" | `reusable-release-drafter`, `reusable-release-publish` |
 | **4 — Repository governance** | "Is the repo tidy & well-formed?" | `reusable-history-check`, `reusable-pr-labeler`, `reusable-stale`, `reusable-pr-title-lint`, `workflow-sanity` |
 | **5 — Project board** | "Project management" | `auto-add-to-project`, `reusable-check-sprint` |
-| **6 — Community & notification** | "How do we talk to humans?" | `issue-welcome`, `octo-ci-status`, `octo-issue-notify`, `octo-pr-result-notify`, `octo-pr-review-feed` + shared `actions/octo-notify` |
+| **6 — Community & notification** | "How do we talk to humans?" | `issue-welcome` (the rest of Plane 6 — `octo-ci-status` / `octo-issue-notify` / `octo-pr-result-notify` / `octo-pr-review-feed` / `octo-notify` — was removed 2026-06-27) |
 
 ### Legend for state below
 - ✅ exists today, keep as-is
