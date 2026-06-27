@@ -31,9 +31,24 @@ on:
         type: string
         required: false
         default: 'https://im.deepminer.com.cn/api'
+      enable_im_notify:
+        type: boolean
+        required: false
+        default: true
+        description: >-
+          When false, skip the Octo IM push and only fire the PR triage webhook.
+          Default true preserves existing behavior for all current callers; opt
+          in by passing `enable_im_notify: false` when a repo has already moved
+          to an external PR triage agent and no longer wants duplicate IM pings.
     secrets:
       OCTO_BOT_TOKEN:
         required: true
+      PR_TRIAGE_WEBHOOK_URL:
+        required: false
+        description: >-
+          PR review triage agent webhook URL (capability secret). When provided,
+          the PR ready_for_review / review_requested event is forwarded to the
+          agent for fan-out review dispatch. Omit to disable.
 
 permissions: {}
 
@@ -112,15 +127,28 @@ jobs:
               f"\U0001f517 {pr_url}"
           )
 
+          import json
+          webhook_payload = json.dumps({
+              'repo': repo_name,
+              'number': int(pr_number),
+              'title': pr_title,
+              'url': pr_url,
+              'author': pr_author,
+              'action': event_action,
+          })
+
           emit('skip', 'false')
           emit('im_message', message)
+          emit('webhook_payload', webhook_payload)
           PYEOF
 
-      - name: Send to Octo IM
+      - name: Send (IM feed + optional triage webhook)
         if: steps.build.outputs.skip != 'true'
         uses: Mininglamp-OSS/.github/.github/actions/octo-notify@v1
         with:
-          im-message: ${{ steps.build.outputs.im_message }}
+          im-message: ${{ inputs.enable_im_notify && steps.build.outputs.im_message || '' }}
           im-token: ${{ secrets.OCTO_BOT_TOKEN }}
           im-group-id: ${{ inputs.project_group_id }}
           im-api-base: ${{ inputs.api_base_url }}
+          webhook-url: ${{ secrets.PR_TRIAGE_WEBHOOK_URL }}
+          webhook-payload: ${{ steps.build.outputs.webhook_payload }}
