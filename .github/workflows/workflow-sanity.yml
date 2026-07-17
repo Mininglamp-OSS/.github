@@ -26,6 +26,7 @@ concurrency:
 jobs:
   contracts:
     name: Workflow contracts
+    # Reusable callers check out their own repository, which has no central tests.
     if: github.repository == 'Mininglamp-OSS/.github'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
