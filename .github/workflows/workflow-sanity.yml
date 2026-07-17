@@ -8,11 +8,13 @@ on:
     paths:
       - '.github/workflows/**'
       - '.github/actions/**'
+      - '.github/tests/**'
   push:
     branches: [main]
     paths:
       - '.github/workflows/**'
       - '.github/actions/**'
+      - '.github/tests/**'
   workflow_dispatch:
 
 permissions: {}
@@ -22,6 +24,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  contracts:
+    name: Workflow contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Test workflow contracts
+        run: python3 -m unittest discover -s .github/tests -p 'test_*.py'
+
   no-tabs:
     name: No tabs in workflow files
     runs-on: ubuntu-24.04
