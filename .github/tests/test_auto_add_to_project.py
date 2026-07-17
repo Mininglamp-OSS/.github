@@ -4,6 +4,7 @@ import unittest
 
 
 WORKFLOW = Path(".github/workflows/auto-add-to-project.yml")
+SANITY_WORKFLOW = Path(".github/workflows/workflow-sanity.yml")
 
 
 class RepositoryModuleMappingTest(unittest.TestCase):
@@ -24,6 +25,20 @@ class RepositoryModuleMappingTest(unittest.TestCase):
             )
         )
         self.assertEqual(mappings.get("octo-docs-html"), "server")
+
+    def test_contract_job_only_runs_in_central_repository(self) -> None:
+        workflow = SANITY_WORKFLOW.read_text(encoding="utf-8")
+        contracts_job = re.search(
+            r"^  contracts:\n(?P<body>.*?)(?=^  [a-z][a-z0-9-]*:\n)",
+            workflow,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+
+        self.assertIsNotNone(contracts_job, "contracts job is missing")
+        self.assertIn(
+            "if: github.repository == 'Mininglamp-OSS/.github'",
+            contracts_job.group("body"),
+        )
 
 
 if __name__ == "__main__":
