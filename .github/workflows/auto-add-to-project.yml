@@ -86,6 +86,7 @@ jobs:
               'octo-cli':              'cli',
               'octo-daemon-cli':       'cli',
               'octo-deployment':       'deployment',
+              'octo-docs-html':        'server',
               'octo-fleet':            'server',
               'octo-im':               'server',
               'octo-ios':              'ios',
@@ -317,4 +318,3 @@ jobs:
             });
 
             core.info(`Inherited Sprint "${sprintTitle}" from linked issue onto PR item ${itemId}.`);
-
