@@ -102,8 +102,8 @@ Found a vulnerability? Please report it responsibly through our [Security Policy
 
 ## Star History
 
-<!-- Star History: flagship product repos only; non-product repos (.github, community, openclaw-channel-octo) and internal tooling (octo-lib, octo-admin) intentionally excluded -->
-[![Star History Chart](https://api.star-history.com/svg?repos=Mininglamp-OSS/octo-web,Mininglamp-OSS/octo-server,Mininglamp-OSS/octo-adapters,Mininglamp-OSS/octo-deployment,Mininglamp-OSS/octo-matter,Mininglamp-OSS/octo-smart-summary&type=Date)](https://star-history.com/#Mininglamp-OSS/octo-web,Mininglamp-OSS/octo-server,Mininglamp-OSS/octo-adapters,Mininglamp-OSS/octo-deployment,Mininglamp-OSS/octo-matter,Mininglamp-OSS/octo-smart-summary&Date)
+<!-- Star History: top 5 Mininglamp-OSS repos by star count (as of 2026-09-16: octo-web 1.1k, octo-server 1.0k, octo-ios 880, octo-cli 859, octo-android 858). Re-rank with `gh api orgs/Mininglamp-OSS/repos --paginate --jq '.[]|"\(.stargazers_count) \(.name)"' | sort -rn` when the leaderboard shifts. -->
+[![Star History Chart](https://api.star-history.com/svg?repos=Mininglamp-OSS/octo-web,Mininglamp-OSS/octo-server,Mininglamp-OSS/octo-ios,Mininglamp-OSS/octo-cli,Mininglamp-OSS/octo-android&type=Date)](https://star-history.com/#Mininglamp-OSS/octo-web,Mininglamp-OSS/octo-server,Mininglamp-OSS/octo-ios,Mininglamp-OSS/octo-cli,Mininglamp-OSS/octo-android&Date)
 
 ## License
 
