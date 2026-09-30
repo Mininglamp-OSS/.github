@@ -121,6 +121,21 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Classify pre-release: a SemVer pre-release tag carries a hyphen segment
+          # (vX.Y.Z-rc.1, -beta, etc.). The tag regex above already guarantees a
+          # valid SemVer shape, so a hyphen here is unambiguously the pre-release
+          # delimiter (build metadata uses '+'). A pre-release must NOT become the
+          # repo's Latest release, otherwise an -rc silently supersedes the stable
+          # line. make_latest=false keeps the existing stable release as Latest.
+          if printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+-'; then
+            PRERELEASE="true"
+            MAKE_LATEST="false"
+          else
+            PRERELEASE="false"
+            MAKE_LATEST="true"
+          fi
+          echo "Tag ${TAG}: prerelease=${PRERELEASE}, make_latest=${MAKE_LATEST}"
+
           # Look up existing release for this tag (--paginate handles repos with many releases)
           # jq -rs: slurp multiple page arrays into one outer array, then flatten with [][]
           release_id=$(gh api "repos/${{ github.repository }}/releases" --paginate \
@@ -132,6 +147,8 @@ jobs:
               --method PATCH \
               --field draft="${DRAFT}" \
               --field tag_name="${TAG}" \
+              --field prerelease="${PRERELEASE}" \
+              --raw-field make_latest="${MAKE_LATEST}" \
               | jq -r '.html_url')
           else
             echo "Creating new release for tag ${TAG}"
@@ -140,6 +157,8 @@ jobs:
               --field tag_name="${TAG}" \
               --field name="${TAG}" \
               --field draft="${DRAFT}" \
+              --field prerelease="${PRERELEASE}" \
+              --raw-field make_latest="${MAKE_LATEST}" \
               --field generate_release_notes=true \
               | jq -r '.html_url')
           fi
