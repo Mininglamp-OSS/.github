@@ -94,7 +94,7 @@ The OCTO community Discord is the best place to get help, discuss features, and 
 
 ## Contributing
 
-We welcome contributions from everyone. Please read our [Contributing Guide](https://github.com/Mininglamp-OSS/.github/blob/main/CONTRIBUTING.md) before getting started.
+We welcome contributions from everyone. Please read our [Contributing Guide](https://github.com/Mininglamp-OSS/.github/blob/main/CONTRIBUTING.md) before getting started, and the [Architecture Overview](https://github.com/Mininglamp-OSS/.github/blob/main/docs/ARCHITECTURE.md) for a map of all OCTO repositories.
 
 ## Security
 

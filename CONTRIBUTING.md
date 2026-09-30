@@ -2,6 +2,8 @@
 
 Thank you for your interest in contributing! This guide applies to all repositories under the Mininglamp-OSS organization.
 
+New to the codebase? Read the [Architecture Overview](docs/ARCHITECTURE.md) for a map of all OCTO repositories and how they fit together.
+
 ## Issue or Discussion?
 
 Not sure whether to open an Issue or a Discussion? Use this guide:
