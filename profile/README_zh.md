@@ -6,8 +6,12 @@
 
 <p>
   <a href="https://github.com/Mininglamp-OSS"><img src="https://img.shields.io/github/stars/Mininglamp-OSS?affiliations=OWNER&label=Total%20Stars&color=blue" alt="GitHub Org Stars" /></a>&nbsp;
-  <a href="https://github.com/Mininglamp-OSS/octo-server/blob/main/LICENSE"><img src="https://img.shields.io/badge/Projects-Apache_2.0-blue.svg" alt="Projects License" /></a>&nbsp;
-  <a href="https://discord.gg/vj9Vsj9hSB"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
+  <a href="https://github.com/Mininglamp-OSS/octo-server/blob/main/LICENSE"><img src="https://img.shields.io/badge/Projects-Apache_2.0-blue.svg" alt="Projects License" /></a>
+</p>
+
+<p>
+  <a href="https://github.com/Mininglamp-OSS/community/issues/new/choose">提交问题</a> &middot;
+  <a href="https://github.com/Mininglamp-OSS/community/discussions">参与讨论</a>
 </p>
 
 [English](./README.md) | 简体中文
@@ -82,19 +86,10 @@ Octo 的一切设计围绕这个原则：
 
 ## 社区
 
-**[加入我们的 Discord →](https://discord.gg/vj9Vsj9hSB)**
+- 在 [Issues](https://github.com/Mininglamp-OSS/community/issues) 报告缺陷或提交具体的改进建议，并注明涉及的组件和版本。
+- 在 [Discussions](https://github.com/Mininglamp-OSS/community/discussions) 提问、分享想法或讨论功能。
 
-OCTO 社区 Discord 是获取帮助、讨论功能、与其他用户和贡献者交流的最佳场所。
-
-- 💬 **日常交流** — 讨论任何 OCTO 相关话题
-- ❓ **帮助与支持** — 提问、获得解答
-- 📦 **项目频道** — 每个 OCTO 组件都有专属频道
-- 🔧 **开发讨论** — 架构讨论、贡献指南、PR 动态
-- 🤖 **Bot 生态** — 构建和分享 OCTO Bot
-
-## 贡献
-
-欢迎每个人参与贡献。请在开始前阅读我们的 [贡献指南](https://github.com/Mininglamp-OSS/.github/blob/main/CONTRIBUTING.md)。
+需要实时交流时，可以加入 [Discord](https://discord.gg/vj9Vsj9hSB)。
 
 ## 安全
 

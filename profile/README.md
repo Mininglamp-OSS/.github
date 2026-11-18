@@ -6,8 +6,12 @@
 
 <p>
   <a href="https://github.com/Mininglamp-OSS"><img src="https://img.shields.io/github/stars/Mininglamp-OSS?affiliations=OWNER&label=Total%20Stars&color=blue" alt="GitHub Org Stars" /></a>&nbsp;
-  <a href="https://github.com/Mininglamp-OSS/octo-server/blob/main/LICENSE"><img src="https://img.shields.io/badge/Projects-Apache_2.0-blue.svg" alt="Projects License" /></a>&nbsp;
-  <a href="https://discord.gg/vj9Vsj9hSB"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
+  <a href="https://github.com/Mininglamp-OSS/octo-server/blob/main/LICENSE"><img src="https://img.shields.io/badge/Projects-Apache_2.0-blue.svg" alt="Projects License" /></a>
+</p>
+
+<p>
+  <a href="https://github.com/Mininglamp-OSS/community/issues/new/choose">Report an issue</a> &middot;
+  <a href="https://github.com/Mininglamp-OSS/community/discussions">Discussions</a>
 </p>
 
 English | [简体中文](./README_zh.md)
@@ -82,19 +86,10 @@ Three laws govern every Agent in Octo, in strict priority order:
 
 ## Community
 
-**[Join our Discord →](https://discord.gg/vj9Vsj9hSB)**
+- Report bugs and specific improvement requests in [Issues](https://github.com/Mininglamp-OSS/community/issues). Include the affected component and version.
+- Ask questions, share ideas, and discuss features in [Discussions](https://github.com/Mininglamp-OSS/community/discussions).
 
-The OCTO community Discord is the best place to get help, discuss features, and connect with other users and contributors.
-
-- 💬 **General chat** — discuss anything OCTO-related
-- ❓ **Help & support** — ask questions, get answers
-- 📦 **Project channels** — dedicated channels for each OCTO component
-- 🔧 **Development** — architecture discussions, contributing guide, PR feed
-- 🤖 **Bot ecosystem** — build and share OCTO bots
-
-## Contributing
-
-We welcome contributions from everyone. Please read our [Contributing Guide](https://github.com/Mininglamp-OSS/.github/blob/main/CONTRIBUTING.md) before getting started.
+Join [Discord](https://discord.gg/vj9Vsj9hSB) for real-time community chat.
 
 ## Security
 
